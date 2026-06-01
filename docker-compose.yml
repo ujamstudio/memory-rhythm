@@ -1,0 +1,93 @@
+# ============================================================================
+# Memory Rhythm — OPTIONAL data-layer stack (M1+ only)
+# ----------------------------------------------------------------------------
+# The web demo runs WITHOUT any of these services:
+#   backend defaults to AI_PROVIDER=mock + STORE=memory (in-memory store.py),
+#   so the full conversation loop boots with NO database and NO API keys.
+#
+# Bring this stack up only when you start wiring the real persistence layer
+# (milestone M1 and later). Nothing in the demo path requires it.
+#
+#   docker compose up -d          # start postgres + neo4j + redis + minio
+#   docker compose down           # stop (add -v to wipe volumes)
+#
+# Default credentials below are for LOCAL DEV ONLY. Do not reuse in production.
+# ============================================================================
+
+services:
+  # --- PostgreSQL 16 + pgvector — episodic memory + embedding similarity search
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: mr-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: memory
+      POSTGRES_PASSWORD: memory
+      POSTGRES_DB: memory_rhythm
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memory -d memory_rhythm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Neo4j Community — semantic memory graph (multi-hop recall cues), M3+
+  neo4j:
+    image: neo4j:5-community
+    container_name: mr-neo4j
+    restart: unless-stopped
+    environment:
+      # user "neo4j", password "memoryrhythm" (min 8 chars required by neo4j)
+      NEO4J_AUTH: neo4j/memoryrhythm
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "7474:7474"   # HTTP browser UI -> http://localhost:7474
+      - "7687:7687"   # Bolt protocol
+    volumes:
+      - neo4jdata:/data
+      - neo4jlogs:/logs
+
+  # --- Redis 7 — conversation state machine, hint level, session cache
+  redis:
+    image: redis:7
+    container_name: mr-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- MinIO (S3-compatible) — autobiography image object storage
+  minio:
+    image: minio/minio:latest
+    container_name: mr-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio12345
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # web console -> http://localhost:9001
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  neo4jdata:
+  neo4jlogs:
+  redisdata:
+  miniodata:

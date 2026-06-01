@@ -1,0 +1,69 @@
+# ============================================================================
+# Memory Rhythm — repository-root .gitignore
+# (frontend/.gitignore is maintained separately by the frontend toolchain)
+# ============================================================================
+
+# ---- Secrets / local env ---------------------------------------------------
+.env
+.env.local
+.env.*.local
+*.local
+
+# ---- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+.eggs/
+build/
+develop-eggs/
+.installed.cfg
+.Python
+
+# virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# uv
+.uv/
+
+# tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.cache/
+
+# ---- Node / frontend build artifacts ---------------------------------------
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- Editors / OS ----------------------------------------------------------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Local tooling config (not part of the project) ------------------------
+.claude/
+
+# ---- Misc / runtime --------------------------------------------------------
+*.log
+logs/
+backend/static/generated/

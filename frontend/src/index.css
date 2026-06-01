@@ -1,0 +1,96 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ------------------------------------------------------------------ */
+/* Warm / calm theme tokens for "기억의 리듬" (Memory Rhythm)          */
+/* ------------------------------------------------------------------ */
+
+:root {
+  color-scheme: light;
+  --rhythm-bg: #fbf6ee;
+  --rhythm-ink: #3a342c;
+  --rhythm-accent: #d99a4e;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--rhythm-bg);
+  color: var(--rhythm-ink);
+  font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+@layer base {
+  h1,
+  h2,
+  h3 {
+    @apply font-semibold tracking-tight;
+  }
+}
+
+@layer components {
+  /* Large, friendly tap targets for elderly users. */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3
+      text-lg font-medium transition active:scale-95 select-none;
+  }
+  .btn-primary {
+    @apply btn bg-amber-warm text-white shadow-soft hover:bg-amber-deep;
+  }
+  .btn-ghost {
+    @apply btn bg-white/70 text-ink ring-1 ring-clay hover:bg-white;
+  }
+  .btn-danger {
+    @apply btn bg-rose-600 text-white hover:bg-rose-700;
+  }
+  .card {
+    @apply rounded-3xl bg-white/80 p-5 shadow-soft ring-1 ring-clay/60 backdrop-blur;
+  }
+  .pill {
+    @apply inline-flex items-center rounded-full bg-sand px-3 py-1 text-sm
+      font-medium text-ink ring-1 ring-clay/70;
+  }
+}
+
+@layer utilities {
+  /* ~40Hz backlight flicker for the e-book panel (gamma entrainment cue).
+     Applied to an overlay so text stays readable. Honors reduced-motion. */
+  .gamma-flicker {
+    animation: gamma-bl 0.025s steps(1) infinite;
+  }
+
+  @keyframes gamma-bl {
+    0%,
+    49% {
+      opacity: 1;
+    }
+    50%,
+    100% {
+      opacity: 0.8;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .gamma-flicker {
+      animation: none;
+      opacity: 1;
+    }
+  }
+
+  /* Thin custom scrollbar for log panels. */
+  .scroll-slim::-webkit-scrollbar {
+    width: 8px;
+  }
+  .scroll-slim::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-clay;
+  }
+}
