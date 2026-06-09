@@ -120,6 +120,9 @@ async def session_socket(websocket: WebSocket, session_id: str) -> None:
                 await _dispatch(orchestrator, session_id, msg, emit)
             except Exception as exc:  # keep the socket alive on per-turn failures
                 await emit(ErrorMsg(message=f"처리 중 오류가 발생했습니다: {exc}"))
+            # Persist the (possibly grown) durable store after each turn so the
+            # patient's accumulating data survives a restart. No-op in memory mode.
+            get_store().persist()
 
     except WebSocketDisconnect:
         # Normal client-initiated close — nothing to clean up (state is in store).

@@ -1,8 +1,39 @@
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
 
+type DemoPatient = {
+  id: string;
+  name: string;
+  dementia_type: string;
+  persona_profile?: string;
+};
+
+const DEMENTIA_LABEL: Record<string, string> = {
+  alzheimer: "알츠하이머",
+  vascular: "혈관성",
+  lewy: "루이소체",
+};
+
 export default function Home() {
   const [, setLocation] = useLocation();
+  // Pre-seeded demo patients (backend/seed_demo.py) so the app can be tried
+  // with rich, already-accumulated data — no need to walk the survey first.
+  const [patients, setPatients] = useState<DemoPatient[]>([]);
+  useEffect(() => {
+    fetch("/api/patients")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) =>
+        setPatients(
+          // Only show patients with a profile (the seeded/onboarded ones), not
+          // the bare auto-created demo patient.
+          Array.isArray(list)
+            ? list.filter((p: DemoPatient) => (p.persona_profile || "").trim())
+            : [],
+        ),
+      )
+      .catch(() => {});
+  }, []);
 
   return (
     <div
@@ -205,6 +236,67 @@ export default function Home() {
             </div>
           </motion.button>
         </motion.div>
+
+        {/* Demo patients — jump straight into a session with rich seeded data */}
+        {patients.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8, delay: 0.35, ease: [0.22, 1, 0.36, 1] }}
+            style={{
+              width: "100%",
+              maxWidth: "800px",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "12px",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "14px",
+                fontWeight: 700,
+                color: "#9A6A3E",
+                letterSpacing: "0.02em",
+              }}
+            >
+              데모 환자로 바로 체험
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "10px",
+                justifyContent: "center",
+              }}
+            >
+              {patients.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setLocation(`/patient/session?patient=${p.id}`)}
+                  className="phys-btn"
+                  style={{
+                    borderRadius: "9999px",
+                    padding: "10px 18px",
+                    fontFamily: '"Gothic A1", sans-serif',
+                    fontSize: "15px",
+                    fontWeight: 800,
+                    color: "#6E4A2A",
+                    background: "rgba(255,255,255,0.78)",
+                    border: "1.5px solid rgba(198,117,55,0.3)",
+                    cursor: "pointer",
+                  }}
+                >
+                  {p.name}
+                  <span style={{ fontWeight: 600, color: "#9A8A74", marginLeft: "6px" }}>
+                    {DEMENTIA_LABEL[p.dementia_type] ?? p.dementia_type}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        )}
       </div>
     </div>
   );

@@ -1,21 +1,24 @@
 // patient.tsx — the live therapy session screen.
 //
-// Adopts the Memory Rhythm (Replit) visual language — warm paper card, 🧠 chat
-// bubbles, progressive HintPolaroid, big tactile mic/hint buttons, 40Hz gamma
-// ring — but is driven entirely by the FastAPI dual-LLM WebSocket loop
-// (../lib/ws WSClient) instead of the original scripted TASKS mock.
+// A calm, single-column conversation for the 어르신 (warm paper card, 🧠 chat
+// bubbles, progressive HintPolaroid, big tactile mic/hint buttons, 감각 자극
+// gamma ring), driven entirely by the FastAPI dual-LLM WebSocket loop
+// (../lib/ws WSClient). The developer-facing 추론(reasoning) chain and
+// 앨범(autobiography) live in slide-in drawers behind header toggles so the main
+// screen stays uncluttered for the patient.
 //
 // Data flow (all from the backend, zero secrets in mock mode):
 //   assistant_message -> 🧠 bubble + real hint_level (drives the Polaroid)
-//   reasoning         -> ReasoningPanel (두뇌 decision + latency)
-//   stage_change      -> stage badge + a centered divider line
-//   autobiography_page -> AutobiographyPanel (right column, desktop)
+//   reasoning         -> 추론 drawer (두뇌 decision + latency)
+//   stage_change      -> a centered divider line
+//   autobiography_page -> 앨범 drawer (그림책 페이지)
 //   recall_prompt     -> a 🔔 bubble (forgetting-curve re-question)
 //
-// The 40Hz gamma ring (visual) + 40Hz tone (audio) share one photosensitive
+// The 감각 자극 gamma ring (visual) + tone (audio) share one photosensitive
 // consent gate (SafetyNotice); an always-visible OFF bar can kill them instantly.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Link, useSearch } from "wouter";
 import type {
@@ -38,14 +41,29 @@ import { AutobiographyPanel } from "../components/patient/AutobiographyPanel";
 const DEMO_SESSION_ID = "demo-session";
 const DEMO_PATIENT_ID = "demo-patient";
 
-// Quick-pick replies that drive the scripted "시장"(market) recall demo so a
-// presenter can click through the scenario without typing.
-const QUICK_REPLIES = [
-  "잘 기억이 안 나네…",
-  "글쎄, 옛날 일이라…",
-  "아 맞다, 시장에 갔었지!",
-  "고등어를 사러 갔던 것 같아",
-];
+// Which slide-in side panel is open (header toggles). "none" keeps the patient
+// screen a clean single-column chat.
+type SidePanel = "none" | "reasoning" | "album";
+
+// Header toggle-chip style (추론 / 앨범).
+function chipStyle(active: boolean): CSSProperties {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    borderRadius: "9999px",
+    padding: "clamp(5px, 1.5vw, 8px) clamp(10px, 3vw, 15px)",
+    fontFamily: '"Gothic A1", sans-serif',
+    fontSize: "clamp(12px, 3vw, 15px)",
+    fontWeight: 800,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+    color: active ? "#FCF8F1" : "#6E4A2A",
+    background: active
+      ? "linear-gradient(135deg, #D98040, #C67537)"
+      : "rgba(255,255,255,0.7)",
+    border: active ? "none" : "1.5px solid rgba(198,117,55,0.28)",
+  };
+}
 
 export default function Patient() {
   // Optional ?patient= from the URL (set by the survey hand-off). When present
@@ -70,10 +88,13 @@ export default function Patient() {
   const [listening, setListening] = useState(false);
   const [input, setInput] = useState("");
 
-  // 40Hz stimulation (gamma ring + tone) — share one consent gate.
+  // 감각 자극 (gamma ring + tone) — share one consent gate.
   const [stimOn, setStimOn] = useState(false);
   const [consented, setConsented] = useState(false);
   const [consentOpen, setConsentOpen] = useState(false);
+
+  // Slide-in drawer: 추론(reasoning) / 앨범(autobiography), hidden by default.
+  const [panel, setPanel] = useState<SidePanel>("none");
 
   const wsRef = useRef<WSClient | null>(null);
   const startedRef = useRef(false);
@@ -311,12 +332,7 @@ export default function Patient() {
     startListening();
   }, [awaiting, listening, input, sendText, startListening, stopListening]);
 
-  const advanceTime = useCallback((days: number) => {
-    wsRef.current?.advanceTime(days);
-    setMessages((m) => [...m, { role: "system", text: `⏩ 시간 가속: +${days}일` }]);
-  }, []);
-
-  // ---- 40Hz stimulation (consent-gated) ---------------------------------
+  // ---- 감각 자극 stimulation (consent-gated) ----------------------------
 
   const enableStim = useCallback(() => {
     gamma.start();
@@ -375,17 +391,17 @@ export default function Patient() {
   return (
     <div
       style={{
-        // min-height (not fixed height) + scroll so that when an 어르신 zooms the
-        // browser or uses a short viewport, the mic/입력 controls are never
-        // clipped off-screen — the whole page scrolls instead.
-        minHeight: "100dvh",
+        // Fixed app frame: the viewport never scrolls — the header / 입력 / 푸터
+        // stay put and ONLY the chat area scrolls internally (see the chat div's
+        // flex:1 + minHeight:0 + overflowY:auto below).
+        height: "100dvh",
         background: "#2a2018",
         display: "flex",
         alignItems: "stretch",
         justifyContent: "center",
         gap: "clamp(6px, 1.5vw, 12px)",
         padding: "clamp(6px, 2vw, 12px)",
-        overflowY: "auto",
+        overflow: "hidden",
       }}
     >
       {stimOn && <div className="gamma-ring" />}
@@ -394,8 +410,14 @@ export default function Patient() {
       <div
         className="paper-surface"
         style={{
-          flex: 1,
-          minWidth: 0,
+          // Single centered conversation column (seoyyul-style), capped so the
+          // chat stays readable instead of stretching across a wide desktop.
+          // height:100% + minHeight:0 give the inner chat a definite box to
+          // scroll within, so the frame stays fixed.
+          width: "100%",
+          maxWidth: "760px",
+          height: "100%",
+          minHeight: 0,
           borderRadius: "clamp(16px, 4vw, 28px)",
           display: "flex",
           flexDirection: "column",
@@ -415,7 +437,7 @@ export default function Patient() {
             borderBottom: "1.5px solid rgba(198,117,55,0.14)",
           }}
         >
-          <Link href="/patient">
+          <Link href="/">
             <span
               style={{
                 fontSize: "clamp(14px, 3.5vw, 18px)",
@@ -457,6 +479,39 @@ export default function Patient() {
               fontWeight: 800,
             }}
           >
+            {/* 추론 / 앨범 toggles — open a slide-in drawer, keep chat clean */}
+            <button
+              type="button"
+              onClick={() => setPanel((p) => (p === "reasoning" ? "none" : "reasoning"))}
+              aria-pressed={panel === "reasoning"}
+              aria-label="추론 과정 보기"
+              className="phys-btn"
+              style={chipStyle(panel === "reasoning")}
+            >
+              추론
+            </button>
+            <button
+              type="button"
+              onClick={() => setPanel((p) => (p === "album" ? "none" : "album"))}
+              aria-pressed={panel === "album"}
+              aria-label="기억 앨범 보기"
+              className="phys-btn"
+              style={{ ...chipStyle(panel === "album"), position: "relative" }}
+            >
+              앨범
+              {pages.length > 0 && (
+                <span
+                  style={{
+                    marginLeft: "5px",
+                    fontSize: "clamp(9px, 2vw, 11px)",
+                    fontWeight: 900,
+                    color: panel === "album" ? "#FCF8F1" : "#C67537",
+                  }}
+                >
+                  {pages.length}
+                </span>
+              )}
+            </button>
             {llmBackend && (
               <span
                 title={`AI 모델 백엔드: ${llmBackend}`}
@@ -481,6 +536,7 @@ export default function Patient() {
               </span>
             )}
             <span
+              title={connected ? "연결됨" : "연결 중…"}
               style={{
                 width: "10px",
                 height: "10px",
@@ -489,15 +545,6 @@ export default function Patient() {
                 boxShadow: connected ? "0 0 8px rgba(106,170,106,0.7)" : "none",
               }}
             />
-            <span
-              style={{
-                fontSize: "clamp(12px, 3vw, 15px)",
-                color: "#6E4A2A",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {stage}단계 · {stageLabel(stage)} · 힌트 {hintLevel}/4
-            </span>
           </div>
         </div>
 
@@ -556,41 +603,6 @@ export default function Patient() {
           <div ref={bottomRef} />
         </div>
 
-        {/* Quick replies (scripted demo helper) */}
-        <div
-          style={{
-            flexShrink: 0,
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "8px",
-            justifyContent: "center",
-            padding: "0 clamp(12px, 4vw, 28px) 6px",
-          }}
-        >
-          {QUICK_REPLIES.map((q) => (
-            <button
-              key={q}
-              type="button"
-              onClick={() => sendText(q)}
-              disabled={awaiting}
-              className="phys-btn"
-              style={{
-                borderRadius: "9999px",
-                padding: "8px 16px",
-                fontFamily: '"Gothic A1", sans-serif',
-                fontSize: "clamp(12px, 3vw, 15px)",
-                fontWeight: 700,
-                color: "#6E4A2A",
-                background: "rgba(255,255,255,0.7)",
-                border: "1.5px solid rgba(198,117,55,0.25)",
-                cursor: awaiting ? "default" : "pointer",
-                opacity: awaiting ? 0.5 : 1,
-              }}
-            >
-              {q}
-            </button>
-          ))}
-        </div>
 
         {/* Typed input */}
         <form
@@ -767,11 +779,11 @@ export default function Patient() {
             </span>
           </button>
 
-          {/* 40Hz stimulation toggle */}
+          {/* 감각 자극 (40Hz) stimulation toggle */}
           <button
             type="button"
             onClick={toggleStim}
-            aria-label={`40헤르츠 안정화 음 ${stimOn ? "끄기" : "켜기"}`}
+            aria-label={`감각 자극 ${stimOn ? "끄기" : "켜기"}`}
             aria-pressed={stimOn}
             className="phys-btn"
             style={{
@@ -794,58 +806,23 @@ export default function Patient() {
               flexShrink: 0,
             }}
           >
-            <span>40Hz</span>
+            <span>감각 자극</span>
             <span style={{ fontSize: "clamp(10px, 2.5vw, 12px)", fontWeight: 700 }}>
               {stimOn ? "켜짐" : "꺼짐"}
             </span>
           </button>
         </div>
-
-        {/* Time-acceleration (forgetting-curve demo) */}
-        <div
-          style={{
-            flexShrink: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "8px",
-            padding: "0 clamp(12px, 4vw, 28px) clamp(10px, 3vw, 16px)",
-            fontFamily: '"Gothic A1", sans-serif',
-          }}
-        >
-          <span style={{ fontSize: "12px", fontWeight: 700, color: "#9A8A74" }}>
-            시간 가속:
-          </span>
-          {[1, 3, 7, 21].map((d) => (
-            <button
-              key={d}
-              type="button"
-              onClick={() => advanceTime(d)}
-              className="phys-btn"
-              style={{
-                borderRadius: "10px",
-                padding: "6px 12px",
-                fontSize: "12px",
-                fontWeight: 800,
-                color: "#6E4A2A",
-                background: "rgba(255,255,255,0.65)",
-                border: "1px solid rgba(198,117,55,0.2)",
-                cursor: "pointer",
-              }}
-            >
-              +{d}일
-            </button>
-          ))}
-        </div>
       </div>
 
-      {/* Right column (desktop): 두뇌 reasoning + autobiography */}
-      <aside className="hidden w-[360px] shrink-0 flex-col gap-3 lg:flex">
-        <div className="min-h-0 flex-1">
-          <ReasoningPanel log={reasoningLog} />
-        </div>
-        <AutobiographyPanel pages={pages} />
-      </aside>
+      {/* Slide-in drawer: 추론(reasoning) / 앨범(autobiography) */}
+      <SidePanelDrawer
+        panel={panel}
+        onClose={() => setPanel("none")}
+        reasoningLog={reasoningLog}
+        pages={pages}
+        stage={stage}
+        hintLevel={hintLevel}
+      />
 
       {/* Safety: consent modal + always-visible OFF bar */}
       <SafetyNotice
@@ -855,5 +832,136 @@ export default function Patient() {
       />
       <StimulationOffBar active={stimOn} onOff={disableStim} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Slide-in drawer holding the 추론(reasoning chain) and 앨범(autobiography)
+// panels — kept off the main chat so the patient screen stays calm, one tap away
+// for a caregiver/presenter via the header toggles.
+// ---------------------------------------------------------------------------
+function SidePanelDrawer({
+  panel,
+  onClose,
+  reasoningLog,
+  pages,
+  stage,
+  hintLevel,
+}: {
+  panel: SidePanel;
+  onClose: () => void;
+  reasoningLog: ReasoningMsg[];
+  pages: AutobiographyPage[];
+  stage: number;
+  hintLevel: number;
+}) {
+  const open = panel !== "none";
+  const title = panel === "album" ? "기억 앨범" : "추론 과정";
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            key="backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            onClick={onClose}
+            style={{
+              position: "fixed",
+              inset: 0,
+              background: "rgba(40,30,20,0.4)",
+              backdropFilter: "blur(2px)",
+              zIndex: 40,
+            }}
+          />
+          <motion.aside
+            key="drawer"
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "spring", stiffness: 320, damping: 34 }}
+            style={{
+              position: "fixed",
+              top: 0,
+              right: 0,
+              height: "100dvh",
+              width: "clamp(320px, 92vw, 440px)",
+              background: "#F4EBDD",
+              boxShadow: "-12px 0 40px rgba(40,25,10,0.3)",
+              zIndex: 41,
+              display: "flex",
+              flexDirection: "column",
+              padding: "clamp(14px, 3vw, 22px)",
+              gap: "12px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                flexShrink: 0,
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    fontFamily: '"Gothic A1", sans-serif',
+                    fontSize: "clamp(16px, 4vw, 20px)",
+                    fontWeight: 900,
+                    color: "#4a3520",
+                  }}
+                >
+                  {title}
+                </div>
+                {panel === "reasoning" && (
+                  <div
+                    style={{
+                      fontFamily: '"Gothic A1", sans-serif',
+                      fontSize: "clamp(11px, 2.5vw, 13px)",
+                      fontWeight: 700,
+                      color: "#9A6A3E",
+                      marginTop: "2px",
+                    }}
+                  >
+                    {stage}단계 · {stageLabel(stage)} · 힌트 {hintLevel}/4
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="닫기"
+                className="phys-btn"
+                style={{
+                  width: "40px",
+                  height: "40px",
+                  borderRadius: "50%",
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: "20px",
+                  fontWeight: 900,
+                  color: "#6E4A2A",
+                  background: "rgba(255,255,255,0.8)",
+                  flexShrink: 0,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+              {panel === "reasoning" ? (
+                <ReasoningPanel log={reasoningLog} />
+              ) : (
+                <AutobiographyPanel pages={pages} />
+              )}
+            </div>
+          </motion.aside>
+        </>
+      )}
+    </AnimatePresence>
   );
 }

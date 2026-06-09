@@ -12,9 +12,13 @@ Run from the ``backend/`` directory:
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.providers import get_providers
@@ -32,6 +36,29 @@ logging.basicConfig(
 )
 
 settings = get_settings()
+
+
+def _init_persistence() -> None:
+    """Attach SQLite persistence to the store (load-on-boot) unless STORE=memory.
+
+    Guarded: any failure (read-only FS, locked file) logs and falls back to the
+    pure in-memory store, so the demo always boots.
+    """
+    if settings.store == "memory":
+        return
+    try:
+        from app.db.persistence import SqlitePersistence
+        from app.store import get_store
+
+        default = Path(__file__).resolve().parent.parent / "data" / "memory_rhythm.db"
+        db_path = settings.db_path or str(default)
+        get_store().attach_persistence(SqlitePersistence(db_path))
+        logging.getLogger(__name__).info("영속 저장 활성화(SQLite): %s", db_path)
+    except Exception as exc:  # pragma: no cover - never block boot
+        logging.getLogger(__name__).warning("영속 저장 초기화 실패 → 인메모리로 진행: %s", exc)
+
+
+_init_persistence()
 
 app = FastAPI(
     title="Memory Rhythm Backend",
@@ -96,12 +123,52 @@ async def health() -> HealthResponse:
     )
 
 
-@app.get("/", include_in_schema=False)
-async def root() -> dict:
-    """Tiny landing payload so hitting the bare backend root is friendly."""
-    return {
-        "service": "memory-rhythm-backend",
-        "docs": "/docs",
-        "health": "/api/health",
-        "ws": "/ws/session/{session_id}",
-    }
+# ---------------------------------------------------------------------------
+# Static frontend (single-host deploy): when a built React bundle is present we
+# serve it from FastAPI itself, so ONE process serves the SPA + REST + WS (the
+# frontend's ws.ts assumes same-host, so this "just works" — no CORS needed).
+# Resolution order: STATIC_DIR env -> backend/static -> ../frontend/dist.
+# Absent (local dev with a separate Vite server) -> a friendly JSON root only.
+# ---------------------------------------------------------------------------
+def _resolve_static_dir() -> Path | None:
+    candidates = []
+    env_dir = os.environ.get("STATIC_DIR")
+    if env_dir:
+        candidates.append(Path(env_dir))
+    here = Path(__file__).resolve().parent  # backend/app
+    candidates.append(here.parent / "static")          # backend/static
+    candidates.append(here.parent.parent / "frontend" / "dist")  # repo/frontend/dist
+    for c in candidates:
+        if c.is_dir() and (c / "index.html").is_file():
+            return c
+    return None
+
+
+_static_dir = _resolve_static_dir()
+
+if _static_dir is not None:
+    _assets = _static_dir / "assets"
+    if _assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_assets)), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa(full_path: str) -> FileResponse:
+        """Serve a real static file when it exists, else the SPA index.html so
+        client-side routes (wouter) resolve. /api and /ws are matched by their
+        routers first, so this catch-all only handles frontend paths."""
+        target = _static_dir / full_path
+        if full_path and target.is_file():
+            return FileResponse(str(target))
+        return FileResponse(str(_static_dir / "index.html"))
+
+else:
+
+    @app.get("/", include_in_schema=False)
+    async def root() -> dict:
+        """Tiny landing payload so hitting the bare backend root is friendly."""
+        return {
+            "service": "memory-rhythm-backend",
+            "docs": "/docs",
+            "health": "/api/health",
+            "ws": "/ws/session/{session_id}",
+        }

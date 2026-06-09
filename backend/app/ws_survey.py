@@ -75,6 +75,9 @@ async def survey_socket(websocket: WebSocket, session_id: str) -> None:
                 await _dispatch(service, session_id, msg, emit)
             except Exception as exc:  # keep the socket alive on per-turn failures
                 await emit(ErrorMsg(message=f"처리 중 오류가 발생했습니다: {exc}"))
+            # Persist after each survey step so the completed profile + seeded
+            # memories (the patient's starting data) survive a restart.
+            get_store().persist()
 
     except WebSocketDisconnect:
         # Normal client-initiated close — nothing to clean up (state is in store).

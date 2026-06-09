@@ -89,7 +89,8 @@ class Settings:
     tts_provider: str = "mock"              # text-to-speech
     image_provider: str = "mock"           # image generation
     embedding_provider: str = "mock"        # text embeddings
-    store: str = "memory"                   # "memory" (only one needed for the demo)
+    store: str = "sqlite"                   # "sqlite" (persist) | "memory" (ephemeral)
+    db_path: str | None = None              # DB_PATH; default backend/data/memory_rhythm.db
     openai_api_key: str | None = None       # OPENAI_API_KEY
     google_api_key: str | None = None       # GOOGLE_API_KEY or GEMINI_API_KEY (Gemini API)
     google_cloud_project: str | None = None  # GOOGLE_CLOUD_PROJECT (Cloud STT)
@@ -165,7 +166,8 @@ def get_settings() -> Settings:
         tts_provider=tts_provider,
         image_provider=image_provider,
         embedding_provider=embedding_provider,
-        store=_env("STORE", "memory").lower(),
+        store=_env("STORE", "sqlite").lower(),
+        db_path=_env_opt("DB_PATH"),
         openai_api_key=_env_opt("OPENAI_API_KEY"),
         google_api_key=google_api_key,
         google_cloud_project=_env_opt("GOOGLE_CLOUD_PROJECT"),

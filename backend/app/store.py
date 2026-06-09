@@ -127,6 +127,9 @@ class Store:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._counter = 0
+        # Optional persistence backend (SQLite). Duck-typed so this module never
+        # imports the db layer (no circular import); wired in by app.main on boot.
+        self._persist = None
 
         self.patients: dict[str, Patient] = {}
         self.memories: dict[str, Memory] = {}
@@ -154,6 +157,17 @@ class Store:
         self.dashboard_patient_name: str = ""
         self.dashboard_stage: int = 1
         self.dashboard_hint_level: int = 0
+
+    # -- persistence (optional, attached by app.main on boot) --------------
+    def attach_persistence(self, persistence) -> None:
+        """Attach a persistence backend and load any saved state into this store."""
+        self._persist = persistence
+        persistence.load_into(self)
+
+    def persist(self) -> None:
+        """Snapshot durable collections to the backend. No-op if none attached."""
+        if self._persist is not None:
+            self._persist.snapshot(self)
 
     # -- counter -----------------------------------------------------------
     def next_seq(self) -> int:

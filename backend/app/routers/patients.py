@@ -39,6 +39,13 @@ async def create_patient(body: CreatePatientRequest) -> Patient:
     return store.create_patient(name=body.name, dementia_type=body.dementia_type)
 
 
+@router.get("/patients", response_model=list[Patient])
+async def list_patients() -> list[Patient]:
+    """List all patients (used by the home-page demo picker)."""
+    store = get_store()
+    return list(store.patients.values())
+
+
 @router.get("/patients/{patient_id}", response_model=Patient)
 async def get_patient(patient_id: str) -> Patient:
     store = get_store()

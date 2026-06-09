@@ -187,6 +187,9 @@ class Orchestrator:
                 "keyword": recall_keyword,
                 "persona": persona,
                 "user_text": text,
+                # The patient's real memories for the dialogue to LEAD toward,
+                # so the AI proactively steers recall instead of just reacting.
+                "lead_topics": state.recall_anchors,
                 # Conversation so far (excludes this turn's user_text, which the
                 # dialogue service re-attaches as the personalized current turn).
                 "history": history,
