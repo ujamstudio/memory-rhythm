@@ -34,7 +34,7 @@ _DEFAULT_GOOGLE_EMBED_DIM = 768
 # Resolved reasoning/dialogue model names per LLM backend.
 _MODELS_BY_PROVIDER: dict[str, tuple[str, str]] = {
     "openai": ("gpt-4o", "gpt-4o-mini"),
-    "google": ("gemini-2.5-flash", "gemini-2.5-flash"),
+    "google": ("gemini-2.5-flash-lite", "gemini-2.5-flash-lite"),
     "mock": ("mock-reasoner", "mock-dialogue"),
 }
 

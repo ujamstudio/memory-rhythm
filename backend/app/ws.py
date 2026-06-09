@@ -31,6 +31,8 @@ from app.schemas import (
     UserMessage,
 )
 from app.services.orchestrator import Orchestrator, build_orchestrator
+from app.sse import get_bus
+from app.store import get_store, now_iso
 
 router = APIRouter()
 
@@ -49,6 +51,42 @@ def _to_jsonable(message: Any) -> dict:
     raise TypeError(f"Cannot serialize server message of type {type(message)!r}")
 
 
+def _record_dashboard(message: Any, dash: dict) -> None:
+    """Derive caregiver-dashboard timeline events + SSE pushes from an outgoing
+    ServerMessage. Best-effort and non-fatal — never breaks the chat loop.
+
+    ``dash`` is per-connection scratch state (tracks the last hint level so an
+    escalation is only recorded once).
+    """
+    try:
+        d = _to_jsonable(message)
+    except Exception:
+        return
+    store = get_store()
+    t = d.get("type")
+    if t == "assistant_message":
+        hl = int(d.get("hint_level", 0) or 0)
+        store.set_dashboard_stage(int(d.get("stage", 1) or 1))
+        store.append_timeline_event("ai_message", d.get("text", ""), hint_level=hl or None)
+        if hl > dash.get("hint", 0):
+            store.record_dashboard_hint(hl, f"‘{(d.get('text') or '')[:24]}’")
+            get_bus().publish(
+                "hint",
+                {"level": hl, "content": (d.get("text") or "")[:48], "at": now_iso()},
+            )
+            dash["hint"] = hl
+    elif t == "autobiography_page":
+        page = d.get("page", {}) or {}
+        narrative = (page.get("narrative") or "")[:24]
+        store.append_timeline_event(
+            "mission_success",
+            f"기억이 자서전으로 남았어요: {narrative}…",
+            mission_name="자서전 페이지",
+        )
+    elif t == "recall_prompt":
+        store.append_timeline_event("ai_message", f"🔔 {d.get('text', '')}")
+
+
 @router.websocket("/ws/session/{session_id}")
 async def session_socket(websocket: WebSocket, session_id: str) -> None:
     await websocket.accept()
@@ -61,8 +99,12 @@ async def session_socket(websocket: WebSocket, session_id: str) -> None:
     providers = get_providers(settings)
     orchestrator = build_orchestrator(settings, providers)
 
+    # Per-connection caregiver-dashboard derivation state (hint escalation).
+    dash: dict[str, int] = {"hint": 0}
+
     async def emit(message: Any) -> None:
         """Send a ServerMessage (or dict) to the connected client as JSON text."""
+        _record_dashboard(message, dash)
         await websocket.send_json(_to_jsonable(message))
 
     try:
@@ -102,7 +144,16 @@ async def _dispatch(
     """
     if isinstance(msg, StartSession):
         await orchestrator.start_session(session_id, msg.patient_id)
+        # Caregiver dashboard: begin a fresh "today" view + push a live alert.
+        store = get_store()
+        state = store.get_session_state(session_id)
+        pid = (state.patient_id if state else "") or msg.patient_id
+        patient = store.get_patient(pid)
+        name = patient.name if patient else "환자"
+        store.start_dashboard_session(name)
+        get_bus().publish("session_started", {"patientName": name, "at": now_iso()})
     elif isinstance(msg, UserMessage):
+        get_store().append_timeline_event("patient_response", msg.text)
         await orchestrator.handle_user_message(session_id, msg.text, emit)
     elif isinstance(msg, AdvanceTime):
         await orchestrator.handle_advance_time(session_id, msg.days, emit)

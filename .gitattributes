@@ -1,0 +1,17 @@
+# Normalize line endings: store LF in the repo, let Git handle checkout.
+# Stops the "LF will be replaced by CRLF" churn/diff-noise on Windows.
+* text=auto eol=lf
+
+# Windows-native scripts keep CRLF.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets — never normalize.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary

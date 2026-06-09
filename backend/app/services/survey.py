@@ -19,6 +19,7 @@ so this service stays stateless beyond the store.
 
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
 from typing import Any, Awaitable, Callable
 
@@ -307,13 +308,17 @@ class SurveyService:
             text = item["text"]
             if not text:
                 continue
-            await self._memory.store_memory(
-                patient_id=state.patient_id,
-                text=text,
-                keywords=item["keywords"],
-                recall_status="recalled",
-            )
-            seeded += 1
+            try:
+                await self._memory.store_memory(
+                    patient_id=state.patient_id,
+                    text=text,
+                    keywords=item["keywords"],
+                    recall_status="recalled",
+                )
+                seeded += 1
+            except Exception:
+                # Never let a single seed/embedding failure abort completion.
+                continue
 
         era = self._infer_era(state.answers.get("name_era", ""))
         summary = await self._make_summary(
@@ -366,9 +371,14 @@ class SurveyService:
         if not self._is_real_llm:
             return template
         try:
-            return await self._llm_summary(state, recallable_keywords, seeded, template)
+            # Bound the LLM call so a slow/hanging Gemini response can never
+            # freeze survey completion (the UI would otherwise hang forever).
+            return await asyncio.wait_for(
+                self._llm_summary(state, recallable_keywords, seeded, template),
+                timeout=15.0,
+            )
         except Exception:
-            # Deterministic fallback — never let a flaky LLM break completion.
+            # Deterministic fallback — never let a flaky/slow LLM break completion.
             return template
 
     def _template_summary(
@@ -432,7 +442,7 @@ class SurveyService:
             messages,
             model=self._reasoning_model,
             temperature=0.6,
-            max_tokens=220,
+            max_tokens=512,
         )
         text = (text or "").strip()
         return text or fallback

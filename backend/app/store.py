@@ -60,8 +60,17 @@ class SessionState:
     # Rolling history of recent user utterances (used by the mock reasoner to
     # decide hint escalation when the patient hesitates).
     user_texts: list[str] = field(default_factory=list)
+    # Full chat transcript (both sides, time-ordered) so the dialogue LLM ("입")
+    # can carry the conversation like a chatbot. Each item: {"role": "user"|
+    # "assistant", "text": str}. Kept separate from user_texts so the reasoner's
+    # user-only history assumptions stay intact.
+    transcript: list[dict] = field(default_factory=list)
     # Keywords collected across the whole session (Tier-1 extraction output).
     collected_keywords: list[str] = field(default_factory=list)
+    # This patient's REAL recall targets (설문 recallable_keywords + 이미 회상한
+    # 기억의 키워드). Populated lazily on the first turn so the reasoner judges
+    # recall against the person's own memories, not just the demo's 시장 baseline.
+    recall_anchors: list[str] = field(default_factory=list)
     # Number of *substantive* turns spent inside Stage 2 (hesitation counter).
     stage2_turns: int = 0
     # Memory ids recalled during this session (so we don't double-build pages).
@@ -98,6 +107,20 @@ class SurveyState:
     keyword_freq: dict[str, int] = field(default_factory=dict)
 
 
+@dataclass
+class TimelineEventRow:
+    """One caregiver-dashboard timeline event (WS4), mirroring the OpenAPI
+    ``TimelineEvent`` shape. Derived from the live therapy WS conversation."""
+
+    id: int
+    timestamp: str
+    # ai_message | patient_response | hint_given | mission_success | mission_fail
+    type: str
+    content: str
+    hint_level: int | None = None
+    mission_name: str | None = None
+
+
 class Store:
     """In-memory repository singleton."""
 
@@ -119,6 +142,18 @@ class Store:
         self.survey_state: dict[str, SurveyState] = {}
         # STEP 1 — Survey: completed results, keyed by patient_id.
         self.survey_results: dict[str, SurveyResult] = {}
+
+        # Caregiver dashboard (WS4): a single "today" view derived from the live
+        # therapy WS conversation. Demo-grade (one active patient at a time),
+        # kept entirely in memory like everything else.
+        self._timeline_seq = 0
+        self._session_seq = 0
+        self.timeline_events: list[TimelineEventRow] = []
+        self.dashboard_sessions: dict[int, dict] = {}
+        self.dashboard_started_at: datetime | None = None
+        self.dashboard_patient_name: str = ""
+        self.dashboard_stage: int = 1
+        self.dashboard_hint_level: int = 0
 
     # -- counter -----------------------------------------------------------
     def next_seq(self) -> int:
@@ -380,6 +415,126 @@ class Store:
 
     def get_survey_result(self, patient_id: str) -> SurveyResult | None:
         return self.survey_results.get(patient_id)
+
+    # -- caregiver dashboard (WS4) ----------------------------------------
+    def start_dashboard_session(self, patient_name: str) -> dict:
+        """Begin a fresh "today" dashboard view for a therapy session.
+
+        Resets the timeline so the dashboard reflects the CURRENT session, and
+        records the start time for the duration stat. Returns the session row.
+        """
+        with self._lock:
+            self._session_seq += 1
+            self.timeline_events = []
+            self.dashboard_started_at = datetime.now(timezone.utc)
+            self.dashboard_patient_name = patient_name
+            self.dashboard_stage = 1
+            self.dashboard_hint_level = 0
+            row = {
+                "id": self._session_seq,
+                "startedAt": self.dashboard_started_at.isoformat(),
+                "status": "active",
+                "patientName": patient_name,
+            }
+            self.dashboard_sessions[self._session_seq] = row
+            return row
+
+    def create_dashboard_session(self, patient_name: str) -> dict:
+        """Create a session row WITHOUT resetting the timeline (POST /sessions)."""
+        with self._lock:
+            self._session_seq += 1
+            if self.dashboard_started_at is None:
+                self.dashboard_started_at = datetime.now(timezone.utc)
+            if patient_name:
+                self.dashboard_patient_name = patient_name
+            row = {
+                "id": self._session_seq,
+                "startedAt": datetime.now(timezone.utc).isoformat(),
+                "status": "active",
+                "patientName": patient_name,
+            }
+            self.dashboard_sessions[self._session_seq] = row
+            return row
+
+    def append_timeline_event(
+        self,
+        type: str,
+        content: str,
+        hint_level: int | None = None,
+        mission_name: str | None = None,
+    ) -> TimelineEventRow:
+        with self._lock:
+            self._timeline_seq += 1
+            row = TimelineEventRow(
+                id=self._timeline_seq,
+                timestamp=now_iso(),
+                type=type,
+                content=content,
+                hint_level=hint_level,
+                mission_name=mission_name,
+            )
+            self.timeline_events.append(row)
+            return row
+
+    def list_timeline_events(self, limit: int = 100) -> list[TimelineEventRow]:
+        return self.timeline_events[-limit:]
+
+    def set_dashboard_stage(self, stage: int) -> None:
+        with self._lock:
+            self.dashboard_stage = stage
+
+    def set_dashboard_hint(self, hint_level: int) -> None:
+        with self._lock:
+            self.dashboard_hint_level = max(self.dashboard_hint_level, hint_level)
+
+    def _count_events(self, *types: str) -> int:
+        return sum(1 for e in self.timeline_events if e.type in types)
+
+    def dashboard_phase(self) -> tuple[int, int]:
+        """Map the therapy 3-stage machine onto the dashboard 4-phase model.
+
+        Returns ``(currentPhase 1..4, progressPercent 0..100)``.
+        """
+        missions = self._count_events("mission_success")
+        stage = self.dashboard_stage
+        phase = min(stage, 3)
+        if stage >= 3 and missions > 0:
+            phase = 4
+        base = (phase - 1) / 4 * 100
+        within = (self.dashboard_hint_level / 4) * 25
+        progress = min(100, round(base + within + (10 if missions else 0)))
+        return phase, progress
+
+    def today_summary(self) -> dict:
+        """Aggregate the current session's timeline into the SessionSummary shape."""
+        msgs = self._count_events("ai_message", "patient_response")
+        hints = self._count_events("hint_given")
+        missions = self._count_events("mission_success")
+        fails = self._count_events("mission_fail")
+        phase, _ = self.dashboard_phase()
+        if self.dashboard_started_at is not None:
+            secs = (datetime.now(timezone.utc) - self.dashboard_started_at).total_seconds()
+            duration = max(0, int(secs // 60))
+        else:
+            duration = 0
+        attempts = missions + fails
+        success_rate = round(100 * missions / attempts) if attempts else (100 if missions else 0)
+        return {
+            "date": datetime.now(timezone.utc).date().isoformat(),
+            "totalMessages": msgs,
+            "hintsUsed": hints,
+            "missionsCompleted": missions,
+            "currentPhase": phase,
+            "durationMinutes": duration,
+            "successRate": float(success_rate),
+        }
+
+    def record_dashboard_hint(self, hint_level: int, mission_context: str = "") -> dict:
+        """Append a hint_given timeline event and return the HintRecord shape."""
+        content = mission_context or f"힌트 레벨 {hint_level} 사용"
+        row = self.append_timeline_event("hint_given", content, hint_level=hint_level)
+        self.set_dashboard_hint(hint_level)
+        return {"id": row.id, "hintLevel": hint_level, "recordedAt": row.timestamp}
 
 
 # Module-level singleton ----------------------------------------------------

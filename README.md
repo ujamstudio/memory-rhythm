@@ -53,17 +53,17 @@
 
 ## 실행 방법
 
-> **사전 요구사항**: Python 3.12 + [`uv`](https://docs.astral.sh/uv/) (백엔드).
-> 프런트엔드에는 **Node.js 18+** 이 필요합니다.
-> ⚠️ **이 머신에는 Node 가 설치되어 있지 않습니다.** 프런트엔드를 실행하려면 먼저
-> [nodejs.org](https://nodejs.org/) 에서 Node 18+ (LTS 권장) 를 설치하세요. 백엔드만으로도
-> REST/WebSocket API 는 완전히 동작하므로, Node 없이도 백엔드 테스트는 가능합니다.
+> **사전 요구사항**: Python 3.12 (conda env `memory-rhythm`) — 백엔드.
+> 프런트엔드에는 **Node.js 20+** 이 필요합니다 (Vite 7). 둘 다 이 머신에 설치되어
+> 있습니다 (Node v24 · npm 11). 백엔드만으로도 REST/WebSocket API 는 완전히 동작합니다.
 
 ### (A) 백엔드 — mock 모드, 키 없이 부팅
 
-```bash
-cd backend
-uv run uvicorn app.main:app --reload --port 8000
+```powershell
+conda activate memory-rhythm
+$env:PYTHONUTF8 = "1"        # Windows: 한글(cp1252) 인코딩 이슈 회피
+python -m uvicorn app.main:app --reload --port 8000 --app-dir backend
+# (uv 사용 시: cd backend; uv run uvicorn app.main:app --reload --port 8000)
 ```
 
 - 기본값 `AI_PROVIDER=mock`, `STORE=memory` 로 즉시 부팅합니다.
@@ -78,7 +78,7 @@ npm install
 npm run dev          # http://localhost:5173 (Vite가 /api·/ws 를 :8000 으로 프록시)
 ```
 
-브라우저에서 <http://localhost:5173> 접속 → 좌 Handset / 우 E-book / `/caregiver` 보호자 포털.
+브라우저에서 <http://localhost:5173> 접속 → 홈에서 **환자 화면**(초기 설문 → 통화) 또는 **보호자 대시보드**(`/caregiver`) 선택.
 
 ### (C) (선택) 데이터베이스 스택 — M1+ 에서만
 
@@ -254,12 +254,14 @@ ad_pg_team_pj/
 │     ├─ services/         # orchestrator / reasoner / dialogue / memory /
 │     │                    #   autobiography / community
 │     └─ routers/          # patients / autobiography / caregiver / community
-└─ frontend/               # React 18 + Vite + TypeScript + Tailwind
+└─ frontend/               # React 19 + Vite 7 + TS + Tailwind v4 + shadcn/ui (wouter)
    └─ src/
       ├─ protocol.ts        # schemas.py 와 필드명 1:1 미러
-      ├─ pages/             # Patient.tsx (좌 Handset / 우 Ebook), Caregiver.tsx
-      └─ components/        # Handset / Ebook / GammaTone / SafetyNotice /
-                            #   ReasoningPanel / IntakeForm / MemoryGraph / RecallQueue
+      ├─ lib/ws.ts          # WSClient + SurveySocket (therapy/survey WebSocket)
+      ├─ lib/contract/      # vendored orval REST 클라이언트 (대시보드 6 엔드포인트)
+      ├─ pages/             # home / landing / survey / patient / caregiver
+      └─ components/        # ui/ (shadcn) + ReasoningPanel / GammaTone /
+                            #   SafetyNotice / SurveyContextPanel / SurveyProfileCard
 ```
 
 ---

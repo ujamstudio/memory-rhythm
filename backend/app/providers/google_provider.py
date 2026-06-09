@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 
 from app.providers.base import (
     EmbeddingProvider,
@@ -34,6 +35,8 @@ from app.providers.base import (
     LLMProvider,
     STTProvider,
 )
+
+logger = logging.getLogger(__name__)
 
 # Module model-name constants (Google-specific; base.py keeps the OpenAI ones).
 GEMINI_LLM_DEFAULT = "gemini-2.5-flash"      # the "두뇌"+"입": reasoning + dialogue
@@ -66,6 +69,47 @@ def _genai_types():
             "필요합니다. (uv add google-genai)"
         ) from exc
     return types
+
+
+def _thinking_off(types):
+    """Disable gemini-2.5 'thinking'.
+
+    For 2.5-flash, 'thinking' tokens are drawn from the SAME ``max_output_tokens``
+    budget, so a short cap (e.g. the survey 기억 프로필 요약 at 220) gets eaten by
+    the thinking pass and the visible answer is truncated to a few words. These
+    are simple tasks (summary / dialogue / a small JSON decision), so we turn
+    thinking off — reliable, faster, cheaper. Returns ``None`` on SDKs without
+    thinking support (older google-genai), which is a harmless no-op.
+    """
+    cfg = getattr(types, "ThinkingConfig", None)
+    return cfg(thinking_budget=0) if cfg is not None else None
+
+
+def _response_text(resp) -> str:
+    """Extract text from a genai response WITHOUT raising.
+
+    ``resp.text`` raises (ValueError) when the candidate finished on MAX_TOKENS /
+    SAFETY with no clean text part — which previously bubbled up and made the
+    dialogue silently fall back to mock. Salvage whatever partial text the parts
+    carry instead.
+    """
+    try:
+        t = resp.text
+        if t:
+            return t.strip()
+    except Exception:
+        pass
+    try:
+        chunks: list[str] = []
+        for cand in getattr(resp, "candidates", None) or []:
+            content = getattr(cand, "content", None)
+            for part in getattr(content, "parts", None) or []:
+                txt = getattr(part, "text", None)
+                if txt:
+                    chunks.append(txt)
+        return "".join(chunks).strip()
+    except Exception:
+        return ""
 
 
 def _split_messages(messages: list[dict]) -> tuple[str, list]:
@@ -147,13 +191,14 @@ class GoogleLLM(LLMProvider):
             system_instruction=system_instruction or None,
             temperature=temperature,
             max_output_tokens=max_tokens,
+            thinking_config=_thinking_off(types),
         )
         resp = await self.client.aio.models.generate_content(
             model=model,
             contents=contents,
             config=config,
         )
-        return (resp.text or "").strip()
+        return _response_text(resp)
 
     async def complete_json(
         self,
@@ -180,13 +225,18 @@ class GoogleLLM(LLMProvider):
             system_instruction=instruction,
             temperature=0.2,
             response_mime_type="application/json",
+            thinking_config=_thinking_off(types),
+            # Cap output so a runaway generation can't silently truncate the small
+            # decision JSON (which would parse to {} and freeze the stage). 384 is
+            # ample for the 6-key Korean decision object.
+            max_output_tokens=384,
         )
         resp = await self.client.aio.models.generate_content(
             model=model,
             contents=contents,
             config=config,
         )
-        return _parse_json_loose(resp.text or "")
+        return _parse_json_loose(_response_text(resp))
 
 
 class GoogleSTT(STTProvider):
@@ -273,9 +323,10 @@ class GoogleImage(ImageProvider):
             image_bytes = resp.generated_images[0].image.image_bytes
             b64 = base64.b64encode(image_bytes).decode("ascii")
             return "data:image/png;base64," + b64
-        except Exception:
+        except Exception as exc:
             # Any failure (missing SDK, no billing, network, empty result) ->
             # deterministic offline SVG so the e-book page is never blank.
+            logger.warning("Google 이미지 생성 실패 → mock 폴백: %s", exc, exc_info=True)
             from app.providers.mock_provider import MockImage
 
             return await MockImage().generate(prompt)
@@ -300,15 +351,27 @@ class GoogleEmbedding(EmbeddingProvider):
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        types = _genai_types()
-        # Defensive against a single-string vs list shape.
-        contents = [texts] if isinstance(texts, str) else list(texts)
-        resp = await self.client.aio.models.embed_content(
-            model=GEMINI_EMBED_MODEL,
-            contents=contents,
-            config=types.EmbedContentConfig(output_dimensionality=self.dim),
-        )
-        return [list(e.values) for e in resp.embeddings]
+        try:
+            types = _genai_types()
+            # Defensive against a single-string vs list shape.
+            contents = [texts] if isinstance(texts, str) else list(texts)
+            resp = await self.client.aio.models.embed_content(
+                model=GEMINI_EMBED_MODEL,
+                contents=contents,
+                config=types.EmbedContentConfig(output_dimensionality=self.dim),
+            )
+            vectors = [list(e.values) for e in resp.embeddings]
+            if not vectors:
+                raise ValueError("empty embedding response")
+            return vectors
+        except Exception as exc:
+            # Any failure (missing SDK, quota, network, empty result) ->
+            # deterministic offline embeddings so memory seeding/search never
+            # breaks the flow (mirrors GoogleImage's mock fallback).
+            logger.warning("Google 임베딩 실패 → mock 폴백: %s", exc, exc_info=True)
+            from app.providers.mock_provider import MockEmbedding
+
+            return await MockEmbedding(dim=self.dim).embed(texts)
 
 
 def _encoding_for_mime(speech, mime: str):

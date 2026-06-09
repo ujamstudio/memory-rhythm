@@ -4,9 +4,9 @@
 // summary the backend built from the conversation, the ranked recallable
 // keywords (green), the unrecallable topics (amber), the count of episodic
 // memories seeded into the patient's store, and a primary CTA that carries the
-// surveyed patient_id into the therapy flow via /patient?patient={id}.
+// surveyed patient_id into the therapy flow via /patient/session?patient={id}.
 
-import { useNavigate } from "react-router-dom";
+import { useLocation } from "wouter";
 import type { SurveyResult } from "../protocol";
 
 const DEMENTIA_LABELS: Record<string, string> = {
@@ -20,16 +20,18 @@ interface SurveyProfileCardProps {
 }
 
 export function SurveyProfileCard({ result }: SurveyProfileCardProps) {
-  const navigate = useNavigate();
+  const [, setLocation] = useLocation();
 
   const startCall = () => {
-    navigate(`/patient?patient=${encodeURIComponent(result.patient_id)}`);
+    setLocation(
+      `/patient/session?patient=${encodeURIComponent(result.patient_id)}`,
+    );
   };
 
   return (
-    <div className="mx-auto max-w-2xl rounded-3xl border border-amber-200 bg-white p-7 shadow-sm">
+    <div className="mx-auto max-w-2xl rounded-3xl border border-[#E7D7C0] bg-white p-7 shadow-md">
       <div className="mb-5 flex items-center gap-3">
-        <span className="grid h-12 w-12 place-items-center rounded-2xl bg-amber-warm text-2xl text-white shadow-soft">
+        <span className="grid h-12 w-12 place-items-center rounded-2xl bg-[#C67537] text-2xl text-white shadow-md">
           ✿
         </span>
         <div>
@@ -44,8 +46,8 @@ export function SurveyProfileCard({ result }: SurveyProfileCardProps) {
       </div>
 
       {/* Narrative summary */}
-      <div className="mb-5 rounded-2xl bg-amber-50/70 p-5">
-        <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-600">
+      <div className="mb-5 rounded-2xl bg-[#F4EBDD]/70 p-5">
+        <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-[#A85E29]">
           요약
         </div>
         <p className="text-lg leading-relaxed text-stone-700">
@@ -109,7 +111,7 @@ export function SurveyProfileCard({ result }: SurveyProfileCardProps) {
       <button
         type="button"
         onClick={startCall}
-        className="w-full rounded-full bg-amber-warm px-6 py-4 text-lg font-bold text-white shadow-soft transition hover:brightness-105"
+        className="w-full rounded-full bg-[#C67537] px-6 py-4 text-lg font-bold text-white shadow-md transition hover:brightness-105"
       >
         이 어르신과 통화 시작하기 →
       </button>

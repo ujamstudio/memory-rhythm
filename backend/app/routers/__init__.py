@@ -5,6 +5,20 @@ Each module exposes an ``APIRouter`` mounted under the ``/api`` prefix by
 layer per the shared contract (see CONTRACT.md §4).
 """
 
-from app.routers import autobiography, caregiver, community, patients, survey
+from app.routers import (
+    autobiography,
+    caregiver,
+    community,
+    patients,
+    sessions,
+    survey,
+)
 
-__all__ = ["patients", "autobiography", "caregiver", "community", "survey"]
+__all__ = [
+    "patients",
+    "autobiography",
+    "caregiver",
+    "community",
+    "sessions",
+    "survey",
+]

@@ -67,3 +67,13 @@ desktop.ini
 *.log
 logs/
 backend/static/generated/
+
+# ---- Adopted-frontend swap (2026-06) ---------------------------------------
+# The previous Vite/React-18 frontend was retired into frontend-legacy/ (kept
+# locally for reference, recoverable from git history) — do not commit it.
+frontend-legacy/
+
+# ---- Harvested Replit prototype --------------------------------------------
+# The Memory-Rhythm/ monorepo was harvested into frontend/ (shadcn UI) plus the
+# backend dashboard endpoints; kept locally for reference only, not committed.
+Memory-Rhythm/

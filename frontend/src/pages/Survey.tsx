@@ -1,16 +1,16 @@
-// Survey.tsx — STEP 1 초기 설문 (대화형).
+// survey.tsx — STEP 1 초기 설문 (대화형).
 //
 // A patient-facing AI-persona conversational onboarding that SETS THE USER'S
-// CONTEXT for the therapy flow. It lives at the dedicated /survey route, runs
-// fully offline in mock mode, and seeds the patient's store so the subsequent
-// therapy call uses real context.
+// CONTEXT for the therapy flow. Lives at the dedicated /survey route, runs fully
+// offline in mock mode, and seeds the patient's store so the subsequent therapy
+// call uses real context. Ported from the original Vite frontend onto the
+// adopted Memory Rhythm (shadcn/wouter) shell — same SurveySocket WS flow.
 //
 // Flow:
 //   1) Setup    — name input + dementia_type select + "설문 시작".
 //   2) Converse — opens its OWN survey WS (SurveySocket -> /ws/survey/{id}),
-//                 sends start_survey, then renders persona question bubbles
-//                 (with a warm `preface`), a text answer input + send, and a
-//                 "잘 모르겠어요 / 건너뛰기" skip button. A live
+//                 sends start_survey, then renders persona question bubbles, a
+//                 text answer input + send, and a skip button. A live
 //                 SurveyContextPanel visualizes Tier-1 extraction.
 //   3) Complete — on `survey_complete`, render SurveyProfileCard.
 
@@ -28,8 +28,7 @@ import {
 import { SurveyProfileCard } from "../components/SurveyProfileCard";
 
 // Human-readable Korean labels for the survey domains. Mirrors the backend
-// domain->label map so the live panel can show friendly topic names. Unknown
-// domains fall back to the raw key.
+// domain->label map so the live panel can show friendly topic names.
 const DOMAIN_LABELS: Record<string, string> = {
   name_era: "이름·시대",
   childhood_place: "어린 시절 고향",
@@ -184,7 +183,6 @@ export default function Survey() {
       if (s === "open") {
         sock.startSurvey(null, trimmed, dementiaType);
       } else if (s === "closed") {
-        // Only surface as an error if we never received the result.
         setWaiting(false);
       }
     });
@@ -203,10 +201,7 @@ export default function Survey() {
   const skip = useCallback(() => {
     if (waiting) return;
     sockRef.current?.skipQuestion();
-    setTurns((ts) => [
-      ...ts,
-      { role: "patient", text: "(잘 모르겠어요)" },
-    ]);
+    setTurns((ts) => [...ts, { role: "patient", text: "(잘 모르겠어요)" }]);
     setAnswer("");
     setWaiting(true);
   }, [waiting]);
@@ -220,7 +215,7 @@ export default function Survey() {
 
   if (step === "complete" && result) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-amber-50 px-4 py-10">
+      <div className="paper-surface min-h-screen px-4 py-10">
         <SurveyProfileCard result={result} />
       </div>
     );
@@ -228,8 +223,8 @@ export default function Survey() {
 
   if (step === "setup") {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-amber-50 px-4 py-10">
-        <div className="mx-auto max-w-xl rounded-3xl border border-amber-200 bg-white p-8 shadow-sm">
+      <div className="paper-surface min-h-screen px-4 py-10">
+        <div className="mx-auto max-w-xl rounded-3xl border border-[#E7D7C0] bg-white p-8 shadow-md">
           <h1 className="text-3xl font-extrabold text-stone-800">초기 설문</h1>
           <p className="mt-2 text-lg leading-relaxed text-stone-500">
             편안하게 이야기 나누며 어르신의 소중한 기억을 함께 모아 봅니다.
@@ -251,7 +246,7 @@ export default function Survey() {
                 if (e.key === "Enter") startSurvey();
               }}
               placeholder="예: 김영자"
-              className="w-full rounded-xl border border-amber-200 bg-white px-4 py-3 text-lg text-stone-800 focus:border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-200"
+              className="w-full rounded-xl border border-[#E7D7C0] bg-white px-4 py-3 text-lg text-stone-800 focus:border-[#C67537] focus:outline-none focus:ring-2 focus:ring-[#EAD0A4]"
             />
           </div>
 
@@ -267,14 +262,14 @@ export default function Survey() {
                   onClick={() => setDementiaType(opt.value)}
                   className={`flex w-full items-start gap-3 rounded-2xl border px-4 py-3 text-left transition ${
                     dementiaType === opt.value
-                      ? "border-amber-400 bg-amber-50 ring-2 ring-amber-200"
+                      ? "border-[#C67537] bg-[#F4EBDD] ring-2 ring-[#EAD0A4]"
                       : "border-stone-200 bg-white hover:bg-stone-50"
                   }`}
                 >
                   <span
                     className={`mt-1 grid h-5 w-5 shrink-0 place-items-center rounded-full border ${
                       dementiaType === opt.value
-                        ? "border-amber-500 bg-amber-500 text-white"
+                        ? "border-[#C67537] bg-[#C67537] text-white"
                         : "border-stone-300"
                     }`}
                   >
@@ -297,7 +292,7 @@ export default function Survey() {
             type="button"
             onClick={startSurvey}
             disabled={!name.trim()}
-            className="mt-8 w-full rounded-full bg-amber-warm px-6 py-4 text-lg font-bold text-white shadow-soft transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
+            className="mt-8 w-full rounded-full bg-[#C67537] px-6 py-4 text-lg font-bold text-white shadow-md transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
           >
             설문 시작
           </button>
@@ -308,7 +303,7 @@ export default function Survey() {
 
   // step === "converse"
   return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-rose-50 to-amber-50 p-4 md:p-6">
+    <div className="paper-surface min-h-screen p-4 md:p-6">
       <div className="mx-auto max-w-6xl">
         <div className="mb-4">
           <h1 className="text-2xl font-bold text-stone-800">
@@ -334,7 +329,7 @@ export default function Survey() {
                 </div>
                 <div className="h-2 w-full overflow-hidden rounded-full bg-stone-100">
                   <div
-                    className="h-full rounded-full bg-amber-warm transition-all duration-500"
+                    className="h-full rounded-full bg-[#C67537] transition-all duration-500"
                     style={{
                       width: `${
                         progress.total > 0
@@ -363,7 +358,7 @@ export default function Survey() {
                     <PersonaBubble key={i} preface={t.preface} text={t.text} />
                   ) : (
                     <div key={i} className="flex justify-end">
-                      <div className="max-w-[80%] rounded-2xl bg-amber-warm px-4 py-3 text-lg leading-relaxed text-white">
+                      <div className="max-w-[80%] rounded-2xl bg-[#C67537] px-4 py-3 text-lg leading-relaxed text-white">
                         {t.text}
                       </div>
                     </div>
@@ -392,12 +387,12 @@ export default function Survey() {
                   onChange={(e) => setAnswer(e.target.value)}
                   disabled={waiting || step !== "converse"}
                   placeholder="여기에 대답을 입력하세요…"
-                  className="flex-1 rounded-xl border border-stone-300 px-4 py-3 text-lg focus:border-amber-400 focus:outline-none disabled:bg-stone-50"
+                  className="flex-1 rounded-xl border border-stone-300 px-4 py-3 text-lg focus:border-[#C67537] focus:outline-none disabled:bg-stone-50"
                 />
                 <button
                   type="submit"
                   disabled={waiting || !answer.trim()}
-                  className="rounded-xl bg-amber-warm px-6 py-3 text-lg font-bold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-xl bg-[#C67537] px-6 py-3 text-lg font-bold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   보내기
                 </button>

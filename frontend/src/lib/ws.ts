@@ -37,6 +37,9 @@ export class WSClient {
   private messageHandlers = new Set<MessageHandler>();
   private stateHandlers = new Set<StateHandler>();
   private _state: ConnectionState = "idle";
+  private _sessionId = "";
+  private _userClosed = false;
+  private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   get state(): ConnectionState {
     return this._state;
@@ -47,15 +50,26 @@ export class WSClient {
     this.stateHandlers.forEach((h) => h(s));
   }
 
-  /** Open a connection for the given session id. Closes any existing socket. */
+  /** Open a connection for the given session id (auto-reconnects on drops). */
   connect(sessionId: string): void {
-    this.close();
+    this._sessionId = sessionId;
+    this._userClosed = false;
+    this._open();
+  }
+
+  private _open(): void {
+    this._teardownSocket();
     this.setState("connecting");
-    const ws = new WebSocket(buildWsUrl(sessionId));
+    const ws = new WebSocket(buildWsUrl(this._sessionId));
     this.ws = ws;
 
     ws.onopen = () => this.setState("open");
-    ws.onclose = () => this.setState("closed");
+    ws.onclose = () => {
+      this.setState("closed");
+      // Reconnect after an UNEXPECTED close (backend restart / network blip)
+      // so the session self-heals; an explicit close() suppresses this.
+      if (!this._userClosed) this._scheduleReconnect();
+    };
     ws.onerror = () => {
       // onerror is followed by onclose; surface as closed for the UI.
       if (this._state !== "open") this.setState("closed");
@@ -69,6 +83,29 @@ export class WSClient {
       }
       this.messageHandlers.forEach((h) => h(parsed));
     };
+  }
+
+  private _scheduleReconnect(): void {
+    if (this._reconnectTimer != null) return;
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      if (!this._userClosed) this._open();
+    }, 1500);
+  }
+
+  private _teardownSocket(): void {
+    if (this.ws) {
+      this.ws.onopen = null;
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws.onmessage = null;
+      try {
+        this.ws.close();
+      } catch {
+        /* ignore */
+      }
+      this.ws = null;
+    }
   }
 
   /** Subscribe to inbound server messages. Returns an unsubscribe fn. */
@@ -93,18 +130,12 @@ export class WSClient {
   }
 
   close(): void {
-    if (this.ws) {
-      this.ws.onopen = null;
-      this.ws.onclose = null;
-      this.ws.onerror = null;
-      this.ws.onmessage = null;
-      try {
-        this.ws.close();
-      } catch {
-        /* ignore */
-      }
-      this.ws = null;
+    this._userClosed = true;
+    if (this._reconnectTimer != null) {
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = null;
     }
+    this._teardownSocket();
   }
 
   // --- typed convenience helpers (mirror the ClientMessage union) ---------

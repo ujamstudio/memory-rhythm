@@ -19,10 +19,13 @@ Two code paths:
 
 from __future__ import annotations
 
+import logging
 import time
 
 from app.providers.base import REASONING_MODEL, Providers
 from app.store import SessionState
+
+logger = logging.getLogger(__name__)
 
 # Concrete place/keyword tokens that count as a successful recall in the demo
 # scenario. The headline target is "시장" (market) per plan §10.
@@ -76,17 +79,27 @@ class Reasoner:
         start = time.perf_counter()
         if self._use_mock:
             decision = self._decide_mock(state, user_text)
+            model = "mock-reasoner"
         else:
             decision = await self._decide_openai(state, user_text)
+            # _decide_openai tags a runtime fallback (429/네트워크/파싱 실패) so the
+            # reasoning panel tells the truth instead of claiming the live model
+            # answered when it actually degraded to mock.
+            fell_back = bool(decision.pop("_fell_back", False))
+            model = f"{self._model} → mock 폴백" if fell_back else self._model
         latency_ms = (time.perf_counter() - start) * 1000.0
-        model = self._model if not self._use_mock else "mock-reasoner"
         return decision, latency_ms, model
 
     # -- mock path ---------------------------------------------------------
     def _decide_mock(self, state: SessionState, user_text: str) -> dict:
         text = (user_text or "").strip()
         keywords = self._extract_keywords(text)
-        recall_kw = [k for k in _RECALL_KEYWORDS if k in text]
+        # Recall targets = this patient's REAL memories (state.recall_anchors,
+        # from the survey + already-recalled memories) UNIONED with the demo's
+        # generic place baseline. Anchors come first so the person's own memory
+        # (나물·딸·…) is what gets celebrated; substring match catches '딸이랑'->'딸'.
+        recall_targets = list(state.recall_anchors) + list(_RECALL_KEYWORDS)
+        recall_kw = [k for k in recall_targets if k and k in text]
         hesitated = any(m in text for m in _HESITATION_MARKERS)
 
         stage = state.stage
@@ -124,12 +137,15 @@ class Reasoner:
                 if hint_level >= 4:
                     reason += " (다음 단서로도 회상이 없으면 부담을 줄여 마무리합니다.)"
             else:
-                # Patient is engaging but hasn't hit the target keyword yet —
-                # nudge one level up to keep the retrieval moving.
-                hint_level = min(state.hint_level + 1, 4)
+                # Patient is engaging (surfaced keywords, no hesitation) — HOLD
+                # the current hint level and re-approach from another angle,
+                # rather than force-escalating toward the direct cue. Escalation
+                # is reserved for genuine hesitation, so we never push answers
+                # onto someone who is actively recalling.
+                hint_level = state.hint_level
                 reason = (
-                    "환자가 반응하지만 핵심 기억에는 도달하지 않아 "
-                    f"단서를 한 단계 높입니다. {_HINT_REASONS[hint_level]}"
+                    "환자가 머뭇거림 없이 대화를 이어가고 있어, 단서 수위를 "
+                    "유지한 채 같은 기억을 다른 각도에서 함께 떠올려 봅니다."
                 )
 
         else:  # stage == 3
@@ -173,13 +189,17 @@ class Reasoner:
             "Stage 2에서는 환자가 머뭇거리면 힌트 수위를 0->4로 점진적으로 올립니다 "
             "(0 질문만, 1 카테고리 단서, 2 주변 기억, 3 시각 단서, 4 직접 단서). "
             "구체적인 장소나 사건 키워드가 회상되면 recall_detected=true 로 판단하고 "
-            "다음 단계로 전환합니다. 정답을 강요하지 말고 부드럽게 유도하세요. "
-            "반드시 JSON만 출력하세요."
+            "다음 단계로 전환합니다. 특히 아래 '이 어르신이 또렷이 기억하는 단서'에 있는 "
+            "내용을 환자가 말하면 그 사람만의 진짜 기억이므로 회상 성공으로 인정하세요. "
+            "환자가 머뭇거림 없이 잘 따라오면 힌트를 올리지 말고 유지하세요. "
+            "정답을 강요하지 말고 부드럽게 유도하세요. 반드시 JSON만 출력하세요."
         )
         history = "\n".join(f"- {t}" for t in state.user_texts[-5:]) or "(없음)"
+        anchors = ", ".join(state.recall_anchors[:12]) or "(아직 없음)"
         user = (
             f"현재 stage={state.stage}, hint_level={state.hint_level}, "
             f"stage2_turns={state.stage2_turns}.\n"
+            f"이 어르신이 또렷이 기억하는 단서: {anchors}\n"
             f"최근 환자 발화:\n{history}\n"
             f"이번 환자 발화: \"{user_text}\"\n\n"
             "다음 키를 가진 JSON으로 결정을 출력하세요: "
@@ -188,7 +208,7 @@ class Reasoner:
         )
         schema_hint = (
             '{"stage": 2, "next_stage": 2, "hint_level": 1, '
-            '"recall_detected": false, "keywords": ["시장"], "reason": "..."}'
+            '"recall_detected": false, "keywords": ["..."], "reason": "..."}'
         )
         messages = [
             {"role": "system", "content": system},
@@ -198,9 +218,25 @@ class Reasoner:
             data = await self._providers.llm.complete_json(
                 messages, model=self._model, schema_hint=schema_hint
             )
-        except Exception:  # pragma: no cover - network/runtime guard
-            # Fall back to the deterministic logic so the demo never stalls.
-            return self._decide_mock(state, user_text)
+        except Exception as exc:  # pragma: no cover - network/runtime guard
+            # Fall back to the deterministic logic so the demo never stalls — but
+            # LOG it (429/auth/network is otherwise invisible) and tag the result
+            # so the panel shows the real model degraded to mock.
+            logger.warning(
+                "두뇌(reasoner) LLM 호출 실패 → mock 폴백: %s", exc, exc_info=True
+            )
+            fallback = self._decide_mock(state, user_text)
+            fallback["_fell_back"] = True
+            return fallback
+
+        # An empty/garbled JSON object means the parse failed silently — treat it
+        # as a fallback (logged + tagged) rather than emitting an all-default
+        # decision that would freeze the stage and never detect recall.
+        if not data:
+            logger.warning("두뇌(reasoner) JSON 파싱 실패(빈 객체) → mock 폴백")
+            fallback = self._decide_mock(state, user_text)
+            fallback["_fell_back"] = True
+            return fallback
 
         return self._coerce_decision(data, state)
 

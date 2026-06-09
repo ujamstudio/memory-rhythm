@@ -90,8 +90,25 @@ class Orchestrator:
         patient = self._store.get_patient(state.patient_id)
         patient_name = patient.name if patient else ""
 
+        # Personalize the recall test to THIS patient: load their real recall
+        # anchors (survey keywords + already-recalled memories) once, so the
+        # reasoner (두뇌) judges recall against the person's own memories — not
+        # only the demo's generic 시장 baseline. Empty for an unsurveyed demo
+        # patient, which preserves the scripted baseline behavior.
+        if not state.recall_anchors:
+            state.recall_anchors = self.memory.recall_anchors(state.patient_id)
+
         # Record the utterance BEFORE deciding so the reasoner sees it in history.
+        # Snapshot the prior transcript (everything up to but NOT including this
+        # turn) so the dialogue LLM gets the running conversation as messages.
+        history = list(state.transcript)
         state.user_texts.append(text)
+        # Only thread non-empty turns into the replayed transcript so the history
+        # stays a clean, alternating user/assistant sequence (Gemini requires
+        # ``contents`` to start with a user turn and alternate roles).
+        text_has_content = bool(text and text.strip())
+        if text_has_content:
+            state.transcript.append({"role": "user", "text": text})
 
         # 1) Reasoner decision (두뇌) + measured latency.
         decision, latency_ms, model = await self.reasoner.decide(state, text)
@@ -134,7 +151,9 @@ class Orchestrator:
         # 3) Recall handling -> create/mark memory, build autobiography page.
         recall_keyword = ""
         if decision.get("recall_detected"):
-            recall_keyword = self._pick_recall_keyword(decision, turn_keywords)
+            recall_keyword = self._pick_recall_keyword(
+                decision, turn_keywords, state.recall_anchors
+            )
             memory = await self._record_recall(state, text, recall_keyword)
             if memory.id not in state.recalled_memory_ids:
                 state.recalled_memory_ids.append(memory.id)
@@ -157,11 +176,26 @@ class Orchestrator:
                 intervals=RECALL_INTERVALS,
             )
 
-        # 4) Dialogue utterance (입).
+        # 4) Dialogue utterance (입) — personalized per patient from the
+        # accumulating store (profile + recalled memories + keywords), so the
+        # friend "knows" this person and grows with them.
+        persona = self.memory.persona_brief(state.patient_id)
         utterance = await self.dialogue.say(
             decision,
-            context={"patient_name": patient_name, "keyword": recall_keyword},
+            context={
+                "patient_name": patient_name,
+                "keyword": recall_keyword,
+                "persona": persona,
+                "user_text": text,
+                # Conversation so far (excludes this turn's user_text, which the
+                # dialogue service re-attaches as the personalized current turn).
+                "history": history,
+            },
         )
+        # Persist the AI turn so the next turn's dialogue keeps the thread (only
+        # when this was a real, non-empty exchange — keeps alternation intact).
+        if text_has_content and utterance and utterance.strip():
+            state.transcript.append({"role": "assistant", "text": utterance})
         await _emit(
             emit,
             {
@@ -185,8 +219,18 @@ class Orchestrator:
         state = self._store.get_or_create_session_state(session_id)
         state.advanced_days += max(0, int(days))
 
+        # A single memory registers four forgetting-curve items (1/3/7/21d). A
+        # big time jump can make several of them due at once — but firing them
+        # all together would bury the patient in duplicate prompts for the SAME
+        # memory and undercut the "spaced repetition" story. So we surface only
+        # the EARLIEST due item per memory this advance; the rest stay queued for
+        # the next jump (true interval-by-interval re-test).
         due = self._store.due_recall_items(state.advanced_days)
-        for item in due:
+        seen_memory_ids: set[str] = set()
+        for item in sorted(due, key=lambda it: it.interval_stage):
+            if item.memory_id in seen_memory_ids:
+                continue
+            seen_memory_ids.add(item.memory_id)
             await _emit(
                 emit,
                 {
@@ -212,16 +256,23 @@ class Orchestrator:
 
     # -- helpers -----------------------------------------------------------
     @staticmethod
-    def _pick_recall_keyword(decision: dict, turn_keywords: list[str]) -> str:
+    def _pick_recall_keyword(
+        decision: dict, turn_keywords: list[str], recall_anchors: list[str] | None = None
+    ) -> str:
         """Choose the most concrete recalled keyword for the page/narrative.
 
-        Prefer a concrete *place* keyword (e.g. "시장") over generic tokens like
-        "맞다" so the autobiography page, narrative and forgetting-curve prompt all
-        center on the real memory anchor. A place keyword may appear as a
-        substring of a token (e.g. "시장에" contains "시장"), so we match on
-        containment, not just equality.
+        Prefer THIS patient's own recall anchor (e.g. "나물") so the autobiography
+        page, narrative and forgetting-curve prompt all center on their real
+        memory; fall back to a generic *place* keyword (e.g. "시장") for the demo
+        baseline, then any concrete token over filler like "맞다". An anchor/place
+        may appear as a substring of a token (e.g. "시장에" contains "시장"), so we
+        match on containment, not just equality.
         """
         candidates = list(decision.get("keywords", [])) + list(turn_keywords)
+        for anchor in recall_anchors or []:
+            for kw in candidates:
+                if anchor and anchor in kw:
+                    return anchor
         for kw in candidates:
             for place in REASONER_RECALL_KEYWORDS:
                 if place in kw:

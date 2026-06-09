@@ -11,15 +11,25 @@ Run from the ``backend/`` directory:
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.providers import get_providers
-from app.routers import autobiography, caregiver, community, patients, survey
+from app.routers import autobiography, caregiver, community, patients, sessions, survey
 from app.schemas import HealthResponse
+from app.sse import router as sse_router
 from app.ws import router as ws_router
 from app.ws_survey import router as ws_survey_router
+
+# Surface backend warnings (esp. LLM/이미지/임베딩 → mock 폴백) so a silent
+# 429/auth/network degradation is visible in the server log during demos.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 settings = get_settings()
 
@@ -51,6 +61,10 @@ app.include_router(caregiver.router, prefix="/api")
 app.include_router(community.router, prefix="/api")
 # STEP 1 — Survey REST: GET /api/patients/{id}/survey.
 app.include_router(survey.router, prefix="/api")
+# Caregiver-dashboard contract (WS4): sessions/today, timeline, current-phase, hint.
+app.include_router(sessions.router, prefix="/api")
+# Caregiver-dashboard live alerts (SSE): GET /api/events/stream.
+app.include_router(sse_router, prefix="/api")
 
 # WebSocket router: ws://localhost:8000/ws/session/{session_id} (no /api prefix).
 app.include_router(ws_router)
