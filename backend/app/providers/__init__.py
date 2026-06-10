@@ -110,6 +110,23 @@ def get_providers(settings) -> Providers:
             voice_id=getattr(settings, "elevenlabs_voice_id", None) or DEFAULT_VOICE_ID,
             model=getattr(settings, "elevenlabs_model", None) or DEFAULT_MODEL,
         )
+    elif tts_provider == "polly":
+        # AWS Polly (Korean Seoyeon/Jihye). Credentials come from boto3's default
+        # chain — the EC2 instance role in prod, or local aws creds in dev. If they
+        # are missing the runtime call raises and the orchestrator degrades to
+        # silent, so this never blocks the zero-secrets boot.
+        from app.providers.polly_provider import (
+            DEFAULT_ENGINE,
+            DEFAULT_REGION,
+            DEFAULT_VOICE,
+            PollyTTS,
+        )
+
+        tts = PollyTTS(
+            region=getattr(settings, "polly_region", None) or DEFAULT_REGION,
+            voice=getattr(settings, "polly_voice", None) or DEFAULT_VOICE,
+            engine=getattr(settings, "polly_engine", None) or DEFAULT_ENGINE,
+        )
     else:
         tts = MockTTS()
 

@@ -11,3 +11,4 @@ python-multipart>=0.0.9
 httpx>=0.27
 numpy>=1.26
 google-genai>=0.3
+boto3>=1.34   # Amazon Polly TTS (TTS_PROVIDER=polly)

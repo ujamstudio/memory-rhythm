@@ -30,8 +30,10 @@ param(
   [string]$Tag = "memory-rhythm",
   [switch]$NoEip,                        # skip re-attaching the tagged Elastic IP
   [switch]$Https,                        # front the app with Caddy + Let's Encrypt (nip.io); needs a tagged EIP
-  [switch]$Eleven                        # enable ElevenLabs TTS (reads ELEVENLABS_* from backend/.env)
+  [switch]$Eleven,                       # enable ElevenLabs TTS (reads ELEVENLABS_* from backend/.env)
+  [switch]$Polly                         # enable Amazon Polly TTS (Korean Seoyeon) via an IAM instance role
 )
+if ($Eleven -and $Polly) { throw "Choose one TTS: -Eleven or -Polly, not both." }
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot          # repo root (deploy/ is one below)
 $backend = Join-Path $repo "backend"
@@ -154,6 +156,41 @@ if ($Eleven) {
   Write-Host "  (ElevenLabs TTS enabled; key injected via instance user-data)" -ForegroundColor Yellow
 }
 
+# -Polly enables Amazon Polly TTS (Korean Seoyeon). The instance gets Polly access
+# via an IAM instance role (no keys in env). We ensure the role/profile idempotently.
+$pollyLine = ""
+$iamProfileArg = @()
+if ($Polly) {
+  $roleName = "$Tag-role"; $profileName = "$Tag-profile"
+  $haveRole = $true
+  try { & aws.exe iam get-role --role-name $roleName 2>&1 | Out-Null; if ($LASTEXITCODE) { $haveRole = $false } } catch { $haveRole = $false }
+  if (-not $haveRole) {
+    $trustDoc = '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
+    $tf = Join-Path $env:TEMP "mr-trust.json"; Set-Content -Path $tf -Value $trustDoc -Encoding ascii
+    AwsChecked iam create-role --role-name $roleName --assume-role-policy-document "file://$tf"
+  }
+  $permDoc = '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"polly:SynthesizeSpeech","Resource":"*"}]}'
+  $pf = Join-Path $env:TEMP "mr-perm.json"; Set-Content -Path $pf -Value $permDoc -Encoding ascii
+  AwsChecked iam put-role-policy --role-name $roleName --policy-name polly-tts --policy-document "file://$pf"
+  $haveProfile = $true
+  try { & aws.exe iam get-instance-profile --instance-profile-name $profileName 2>&1 | Out-Null; if ($LASTEXITCODE) { $haveProfile = $false } } catch { $haveProfile = $false }
+  if (-not $haveProfile) {
+    AwsChecked iam create-instance-profile --instance-profile-name $profileName
+    AwsChecked iam add-role-to-instance-profile --instance-profile-name $profileName --role-name $roleName
+    Start-Sleep -Seconds 12   # let the new instance profile propagate before run-instances
+  }
+  $iamProfileArg = @("--iam-instance-profile", "Name=$profileName")
+  $pollyLine = "Environment=TTS_PROVIDER=polly`nEnvironment=POLLY_REGION=$Region"
+  $envFile2 = Join-Path $backend ".env"
+  if (Test-Path $envFile2) {
+    $pv = (Select-String -Path $envFile2 -Pattern '^\s*POLLY_VOICE\s*=' | Select-Object -First 1).Line
+    if ($pv) { $pvv = ($pv -replace '^\s*POLLY_VOICE\s*=\s*', '').Trim().Trim('"'); if ($pvv) { $pollyLine += "`nEnvironment=POLLY_VOICE=$pvv" } }
+    $pe = (Select-String -Path $envFile2 -Pattern '^\s*POLLY_ENGINE\s*=' | Select-Object -First 1).Line
+    if ($pe) { $pee = ($pe -replace '^\s*POLLY_ENGINE\s*=\s*', '').Trim().Trim('"'); if ($pee) { $pollyLine += "`nEnvironment=POLLY_ENGINE=$pee" } }
+  }
+  Write-Host "  (Polly TTS enabled; instance role $profileName grants polly:SynthesizeSpeech)" -ForegroundColor Yellow
+}
+
 $userData = @'
 #!/bin/bash
 set -euxo pipefail
@@ -180,6 +217,7 @@ Environment=AI_PROVIDER=__AIPROVIDER__
 Environment=STORE=sqlite
 __GEMINILINE__
 __ELEVENLINE__
+__POLLYLINE__
 ExecStart=/opt/app/venv/bin/uvicorn app.main:app __UVICORNBIND__
 Restart=always
 RestartSec=3
@@ -212,7 +250,7 @@ systemctl enable caddy
 systemctl restart caddy
 "@
 }
-$userData = $userData.Replace("__PRESIGNED__", $presigned).Replace("__AIPROVIDER__", $aiProvider).Replace("__GEMINILINE__", $geminiLine).Replace("__ELEVENLINE__", $elevenLine).Replace("__UVICORNBIND__", $uvicornBind).Replace("__CADDYBLOCK__", $caddyBlock)
+$userData = $userData.Replace("__PRESIGNED__", $presigned).Replace("__AIPROVIDER__", $aiProvider).Replace("__GEMINILINE__", $geminiLine).Replace("__ELEVENLINE__", $elevenLine).Replace("__POLLYLINE__", $pollyLine).Replace("__UVICORNBIND__", $uvicornBind).Replace("__CADDYBLOCK__", $caddyBlock)
 $udFile = Join-Path $env:TEMP "memrhythm-userdata.sh"
 Set-Content -Path $udFile -Value $userData -Encoding ascii -NoNewline
 
@@ -220,7 +258,7 @@ Set-Content -Path $udFile -Value $userData -Encoding ascii -NoNewline
 $keyArg = @(); if ($KeyName) { $keyArg = @("--key-name", $KeyName) }
 $instId = (& aws ec2 run-instances --region $Region `
   --image-id $ami --instance-type $InstanceType --security-group-ids $sg `
-  --associate-public-ip-address @keyArg `
+  --associate-public-ip-address @keyArg @iamProfileArg `
   --user-data "file://$udFile" `
   --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$Tag}]" `
   --query "Instances[0].InstanceId" --output text)
@@ -254,8 +292,9 @@ $primaryUrl = if ($Https) { "https://$nipHost/" } else { "http://$dns/" }
 Write-Host "   URL:        $primaryUrl" -ForegroundColor White
 if (-not $Https) { Write-Host "   IP:         http://$ip/" -ForegroundColor White }
 if ($Https) { Write-Host "   (HTTP $ip redirects to HTTPS; cert issues ~30-90s after boot)" -ForegroundColor DarkGray }
-$aiMode = if ($Gemini) { "Gemini LLM (두뇌+입); STT/TTS/image/embedding=mock" } else { "mock" }
-Write-Host "   AI mode:    $aiMode" -ForegroundColor White
+$ttsMode = if ($Polly) { "Polly(ko)" } elseif ($Eleven) { "ElevenLabs" } else { "mock" }
+$llmMode = if ($Gemini) { "Gemini" } else { "mock" }
+Write-Host "   AI mode:    LLM=$llmMode, TTS=$ttsMode, STT/image/embedding=mock" -ForegroundColor White
 Write-Host "   Instance:   $instId  ($InstanceType, $Region)" -ForegroundColor White
 if ($KeyName) { Write-Host "   SSH:        ssh ubuntu@$dns  (logs: journalctl -u memrhythm -f)" -ForegroundColor DarkGray }
 Write-Host ""

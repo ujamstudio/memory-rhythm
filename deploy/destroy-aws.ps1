@@ -40,6 +40,21 @@ if ($eipAlloc -and $eipAlloc -match '^eipalloc-') {
   Write-Host "No tagged Elastic IP to release." -ForegroundColor DarkGray
 }
 
+# 1c) remove the Polly IAM instance profile + role (created by -Polly), if present
+$roleName = "$Tag-role"; $profileName = "$Tag-profile"
+& aws iam get-instance-profile --instance-profile-name $profileName *>$null
+if ($LASTEXITCODE -eq 0) {
+  & aws iam remove-role-from-instance-profile --instance-profile-name $profileName --role-name $roleName 2>$null
+  & aws iam delete-instance-profile --instance-profile-name $profileName 2>$null
+  Write-Host "Deleted instance profile $profileName." -ForegroundColor Green
+}
+& aws iam get-role --role-name $roleName *>$null
+if ($LASTEXITCODE -eq 0) {
+  & aws iam delete-role-policy --role-name $roleName --policy-name polly-tts 2>$null
+  & aws iam delete-role --role-name $roleName 2>$null
+  Write-Host "Deleted IAM role $roleName." -ForegroundColor Green
+}
+
 # 2) delete security group (retry: ENI detach lags briefly after termination)
 $sg = (& aws ec2 describe-security-groups --region $Region --filters "Name=group-name,Values=$Tag-sg" --query "SecurityGroups[0].GroupId" --output text 2>$null)
 if ($sg -and $sg -ne "None") {

@@ -25,9 +25,9 @@ from app.providers.base import EMBEDDING_DIM
 
 # Valid provider backends for any capability.
 _VALID_PROVIDERS = ("mock", "openai", "google")
-# TTS additionally accepts "elevenlabs" (TTS-only — it implements no other
-# capability, so it is intentionally not in the shared set above).
-_VALID_TTS_PROVIDERS = _VALID_PROVIDERS + ("elevenlabs",)
+# TTS additionally accepts "elevenlabs" and "polly" (TTS-only — they implement no
+# other capability, so they are intentionally not in the shared set above).
+_VALID_TTS_PROVIDERS = _VALID_PROVIDERS + ("elevenlabs", "polly")
 
 # Mock pseudo-vector dimension default (kept for back-compat with EMBEDDING_DIM).
 _DEFAULT_EMBED_DIM = EMBEDDING_DIM
@@ -102,6 +102,9 @@ class Settings:
     elevenlabs_api_key: str | None = None   # ELEVENLABS_API_KEY (TTS only)
     elevenlabs_voice_id: str | None = None  # ELEVENLABS_VOICE_ID (default in provider)
     elevenlabs_model: str | None = None     # ELEVENLABS_MODEL (default in provider)
+    polly_region: str | None = None         # POLLY_REGION / AWS_REGION (TTS only)
+    polly_voice: str | None = None          # POLLY_VOICE (default Seoyeon)
+    polly_engine: str | None = None         # POLLY_ENGINE (neural | generative | standard)
     embed_dim: int = _DEFAULT_EMBED_DIM     # mock pseudo-vector dimension
     google_embed_dim: int = _DEFAULT_GOOGLE_EMBED_DIM  # gemini-embedding-001 dim
     cors_origin: str = "http://localhost:5173"
@@ -185,6 +188,9 @@ def get_settings() -> Settings:
         elevenlabs_api_key=_env_opt("ELEVENLABS_API_KEY"),
         elevenlabs_voice_id=_env_opt("ELEVENLABS_VOICE_ID"),
         elevenlabs_model=_env_opt("ELEVENLABS_MODEL"),
+        polly_region=_env_opt("POLLY_REGION") or _env_opt("AWS_REGION"),
+        polly_voice=_env_opt("POLLY_VOICE"),
+        polly_engine=_env_opt("POLLY_ENGINE"),
         embed_dim=_env_int("EMBED_DIM", _DEFAULT_EMBED_DIM),
         google_embed_dim=_env_int("GOOGLE_EMBED_DIM", _DEFAULT_GOOGLE_EMBED_DIM),
         cors_origin=_env("CORS_ORIGIN", "http://localhost:5173"),
