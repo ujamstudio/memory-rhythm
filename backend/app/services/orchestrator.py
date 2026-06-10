@@ -176,6 +176,30 @@ class Orchestrator:
                 intervals=RECALL_INTERVALS,
             )
 
+        # 3b) New-memory capture: the patient shared a fresh everyday experience
+        # (e.g. answering "오늘 무슨 일 있었어요?"). Distinct from recalling an OLD
+        # memory — we STORE it (status "shared") and register it on the forgetting
+        # curve so a later session can gently re-ask it ("지난번에 …하셨죠?").
+        elif decision.get("new_memory"):
+            mem_text = (decision.get("new_memory_text") or text).strip()
+            if mem_text:
+                new_mem = await self.memory.store_memory(
+                    state.patient_id,
+                    mem_text,
+                    keywords=turn_keywords or self.memory.extract_keywords(mem_text),
+                    recall_status="shared",
+                )
+                self._store.add_recall_items(
+                    memory_id=new_mem.id,
+                    text=self._reask_text(mem_text),
+                    from_day=state.advanced_days,
+                    intervals=RECALL_INTERVALS,
+                )
+                await _emit(
+                    emit,
+                    {"type": "memory_saved", "text": mem_text, "memory_id": new_mem.id},
+                )
+
         # 4) Dialogue utterance (입) — personalized per patient from the
         # accumulating store (profile + recalled memories + keywords), so the
         # friend "knows" this person and grows with them.
@@ -304,6 +328,14 @@ class Orchestrator:
         if kw in ("추억", "그때", ""):
             return "지난번에 들려주신 이야기, 조금 더 들려주실래요?"
         return f"지난번 '{kw}' 이야기 참 좋았어요. 그 이야기 더 들려주실래요?"
+
+    @staticmethod
+    def _reask_text(memory_text: str) -> str:
+        """Forgetting-curve re-ask for a newly shared everyday memory."""
+        snippet = memory_text.strip()
+        if len(snippet) > 24:
+            snippet = snippet[:24] + "…"
+        return f"지난번에 \"{snippet}\" 하셨다고 했죠. 그 일은 그 뒤로 어떻게 됐어요?"
 
     async def _maybe_emit_audio(self, text: str, emit: Emit) -> None:
         """Synthesize TTS and emit an ``audio`` message; skip when empty (mock)."""

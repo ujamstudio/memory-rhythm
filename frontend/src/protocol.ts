@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 
 export type DementiaType = "alzheimer" | "vascular" | "lewy";
-export type RecallStatus = "unrecalled" | "recalled";
+export type RecallStatus = "unrecalled" | "recalled" | "shared";
 export type IntervalStage = 1 | 3 | 7 | 21;
 
 // Stage labels (1 -> 정서 안정화, 2 -> 대화형 인출, 3 -> 행동 수행)
@@ -149,6 +149,12 @@ export interface RecallPrompt {
   memory_id: string;
 }
 
+export interface MemorySavedMsg {
+  type: "memory_saved";
+  text: string;
+  memory_id: string;
+}
+
 export interface AudioMsg {
   type: "audio";
   format: "mp3";
@@ -166,6 +172,7 @@ export type ServerMessage =
   | AssistantMessage
   | AutobiographyPageMsg
   | RecallPrompt
+  | MemorySavedMsg
   | AudioMsg
   | ErrorMsg;
 

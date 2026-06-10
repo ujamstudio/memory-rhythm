@@ -19,7 +19,8 @@ from pydantic import BaseModel, Field
 # ---------------------------------------------------------------------------
 
 DementiaType = Literal["alzheimer", "vascular", "lewy"]
-RecallStatus = Literal["unrecalled", "recalled"]
+# "shared" = a NEW everyday memory the patient just told us (not yet re-recalled).
+RecallStatus = Literal["unrecalled", "recalled", "shared"]
 IntervalStage = Literal[1, 3, 7, 21]
 
 # Stage labels (1 -> 정서 안정화, 2 -> 대화형 인출, 3 -> 행동 수행)
@@ -87,6 +88,10 @@ class ReasoningDecision(BaseModel):
     recall_detected: bool
     keywords: list[str] = Field(default_factory=list)
     reason: str = ""
+    # The patient shared a NEW everyday experience (e.g. answering "오늘 무슨 일
+    # 있었어요?") worth remembering — distinct from recalling an OLD memory.
+    new_memory: bool = False
+    new_memory_text: str = ""
 
 
 class CommunityTurn(BaseModel):
@@ -159,6 +164,14 @@ class RecallPrompt(BaseModel):
     memory_id: str
 
 
+class MemorySavedMsg(BaseModel):
+    """A new everyday memory was just captured and stored from the conversation."""
+
+    type: Literal["memory_saved"] = "memory_saved"
+    text: str
+    memory_id: str
+
+
 class AudioMsg(BaseModel):
     type: Literal["audio"] = "audio"
     format: Literal["mp3"] = "mp3"
@@ -177,6 +190,7 @@ ServerMessage = Annotated[
         AssistantMessage,
         AutobiographyPageMsg,
         RecallPrompt,
+        MemorySavedMsg,
         AudioMsg,
         ErrorMsg,
     ],

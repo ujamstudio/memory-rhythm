@@ -148,6 +148,13 @@ export default function Patient() {
       case "recall_prompt":
         setMessages((m) => [...m, { role: "assistant", text: `🔔 ${msg.text}` }]);
         break;
+      case "memory_saved":
+        // The AI captured a new everyday memory from what the patient just shared.
+        setMessages((m) => [
+          ...m,
+          { role: "system", text: `📝 오늘 이야기를 기억에 담았어요: “${msg.text}”` },
+        ]);
+        break;
       case "audio":
         if (msg.b64) {
           try {

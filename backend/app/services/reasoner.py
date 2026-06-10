@@ -59,6 +59,12 @@ _NEGATION_MARKERS: tuple[str, ...] = (
 # genuine recall in another ("시장만 갔지"), so negation is judged per clause.
 _CLAUSE_SPLIT = re.compile(r"[,.!?]|말고|하지만|지만|는데")
 
+# When the AI's prior turn asks about recent/everyday life, a substantive reply is
+# a NEW memory to store (not a recall of an old one).
+_RECENT_QUESTION: tuple[str, ...] = (
+    "오늘", "하루", "요즘", "근황", "지내", "무슨 일", "어떤 일", "지냈",
+)
+
 # Korean reason strings for each hint level (shown verbatim in the panel).
 _HINT_REASONS: dict[int, str] = {
     0: "열린 질문으로 부담 없이 회상을 시도합니다.",
@@ -204,6 +210,27 @@ class Reasoner:
             else:
                 reason = "회상한 기억을 정리하고 세션을 마무리합니다."
 
+        # New-memory capture: when the AI just asked about today/recent life (the
+        # opening greeting on turn 1, or a follow-up containing 오늘/요즘/…) and the
+        # patient answers with a substantive NEW experience (not a recall, not a
+        # denial/hesitation), record it as a fresh everyday memory.
+        last_ai = next(
+            (t.get("text", "") for t in reversed(state.transcript)
+             if t.get("role") == "assistant"),
+            "",
+        )
+        asked_recent = (len(state.user_texts) <= 1) or any(
+            q in last_ai for q in _RECENT_QUESTION
+        )
+        new_memory = (
+            asked_recent
+            and not recall_detected
+            and not negated
+            and not hesitated
+            and len(text.strip()) >= 8
+            and bool(keywords)
+        )
+
         return {
             "stage": stage,
             "next_stage": next_stage,
@@ -211,6 +238,8 @@ class Reasoner:
             "recall_detected": recall_detected,
             "keywords": keywords or recall_kw,
             "reason": reason,
+            "new_memory": new_memory,
+            "new_memory_text": text.strip() if new_memory else "",
         }
 
     @staticmethod
@@ -248,6 +277,11 @@ class Reasoner:
             "⚠️환자가 '아니요/아니야/그런 적 없어'처럼 제안을 부정하면, 그 발화에 키워드가 들어 "
             "있더라도 절대 recall_detected=true로 보지 마세요(부정은 회상이 아닙니다). 그럴 땐 "
             "단계를 올리지 말고 그 단서는 접은 뒤 다른 기억으로 방향을 바꾸세요. "
+            "⚠️환자가 오늘이나 최근에 '실제로 있었던 일/경험'(예: 누구를 만남, 어디 다녀옴, 무슨 일이 "
+            "있었음)을 이야기하면 new_memory=true로 표시하고 new_memory_text에 그 일을 한 문장으로 "
+            "간결히 요약하세요(예: '오늘 작은딸이 찾아와 함께 점심을 드심'). 이건 옛 기억 회상"
+            "(recall_detected)과는 다른, '새로 들은 일상'의 기록입니다. 단순 인사·날씨·감정 토로만 "
+            "있을 땐 new_memory=false로 두세요. "
             "정답을 강요하지 말고 부드럽게 유도하세요. 반드시 JSON만 출력하세요."
         )
         history = "\n".join(f"- {t}" for t in state.user_texts[-5:]) or "(없음)"
@@ -260,11 +294,13 @@ class Reasoner:
             f"이번 환자 발화: \"{user_text}\"\n\n"
             "다음 키를 가진 JSON으로 결정을 출력하세요: "
             "stage(int), next_stage(int), hint_level(int 0-4), "
-            "recall_detected(bool), keywords(string[]), reason(string, 한국어)."
+            "recall_detected(bool), keywords(string[]), reason(string, 한국어), "
+            "new_memory(bool), new_memory_text(string, 한국어 한 문장 요약)."
         )
         schema_hint = (
             '{"stage": 2, "next_stage": 2, "hint_level": 1, '
-            '"recall_detected": false, "keywords": ["..."], "reason": "..."}'
+            '"recall_detected": false, "keywords": ["..."], "reason": "...", '
+            '"new_memory": false, "new_memory_text": ""}'
         )
         messages = [
             {"role": "system", "content": system},
@@ -321,4 +357,6 @@ class Reasoner:
             "recall_detected": bool(data.get("recall_detected", False)),
             "keywords": keywords,
             "reason": str(data.get("reason", "")),
+            "new_memory": bool(data.get("new_memory", False)),
+            "new_memory_text": str(data.get("new_memory_text", "")),
         }

@@ -85,6 +85,12 @@ def _record_dashboard(message: Any, dash: dict) -> None:
         )
     elif t == "recall_prompt":
         store.append_timeline_event("ai_message", f"🔔 {d.get('text', '')}")
+    elif t == "memory_saved":
+        store.append_timeline_event(
+            "memory_saved",
+            f"새 기억을 담았어요: {(d.get('text') or '')[:28]}",
+            mission_name="새 기억 저장",
+        )
 
 
 @router.websocket("/ws/session/{session_id}")
