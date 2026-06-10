@@ -28,7 +28,8 @@ param(
   [switch]$Gemini,                       # inject GOOGLE_API_KEY from backend/.env
   [string]$KeyName = "",                 # optional EC2 key pair name (enables SSH:22)
   [string]$Tag = "memory-rhythm",
-  [switch]$NoEip                         # skip re-attaching the tagged Elastic IP
+  [switch]$NoEip,                        # skip re-attaching the tagged Elastic IP
+  [switch]$Https                         # front the app with Caddy + Let's Encrypt (nip.io); needs a tagged EIP
 )
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot          # repo root (deploy/ is one below)
@@ -88,6 +89,26 @@ if (-not $sg -or $sg -notmatch '^sg-') {
 }
 Write-Host "Security group: $sg (vpc $vpc)" -ForegroundColor Green
 
+# HTTPS needs 443 open for Caddy/TLS (idempotent — ignore "already exists").
+if ($Https) {
+  try { & aws.exe ec2 authorize-security-group-ingress --region $Region --group-id $sg --protocol tcp --port 443 --cidr 0.0.0.0/0 2>&1 | Out-Null } catch {}
+}
+
+# Resolve the nip.io hostname from the tagged Elastic IP (Caddy serves a real
+# Let's Encrypt cert for "<eip-dashed>.nip.io" — no domain or account verification
+# needed). The EIP is re-attached to this new instance in step 6b.
+$nipHost = ""
+if ($Https) {
+  $eipIp = (& aws.exe ec2 describe-addresses --region $Region --filters "Name=tag:Name,Values=$Tag" --query "Addresses[0].PublicIp" --output text 2>&1 | Select-Object -Last 1)
+  if (-not $eipIp -or $eipIp -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+    throw "-Https needs a tagged Elastic IP. Run a normal deploy once (it allocates + tags one), then re-run with -Https."
+  }
+  # Canonical dot form "<ip>.nip.io" — public resolvers (and thus Let's Encrypt)
+  # return exactly the embedded IP, so the ACME HTTP-01 challenge hits us.
+  $nipHost = "$eipIp.nip.io"
+  Write-Host "HTTPS: Caddy + Let's Encrypt -> https://$nipHost (origin app on :8000)" -ForegroundColor Cyan
+}
+
 # --- 4) AMI (latest Ubuntu 24.04, has Python 3.12) via SSM public param ---
 $ami = (& aws ssm get-parameters --region $Region --names "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id" --query "Parameters[0].Value" --output text)
 if (-not $ami -or $ami -eq "None") { throw "Could not resolve Ubuntu 24.04 AMI in $Region." }
@@ -137,7 +158,7 @@ WorkingDirectory=/opt/app
 Environment=AI_PROVIDER=__AIPROVIDER__
 Environment=STORE=sqlite
 __GEMINILINE__
-ExecStart=/opt/app/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 80
+ExecStart=/opt/app/venv/bin/uvicorn app.main:app __UVICORNBIND__
 Restart=always
 RestartSec=3
 [Install]
@@ -145,8 +166,31 @@ WantedBy=multi-user.target
 UNIT
 systemctl daemon-reload
 systemctl enable --now memrhythm
+__CADDYBLOCK__
 '@
-$userData = $userData.Replace("__PRESIGNED__", $presigned).Replace("__AIPROVIDER__", $aiProvider).Replace("__GEMINILINE__", $geminiLine)
+# With -Https the app listens only on localhost and Caddy terminates TLS in front
+# of it (port 80 = ACME challenge + redirect, 443 = HTTPS) for the nip.io host.
+$uvicornBind = if ($Https) { "--host 127.0.0.1 --port 8000" } else { "--host 0.0.0.0 --port 80" }
+$caddyBlock = ""
+if ($Https) {
+  $caddyBlock = @"
+# --- HTTPS via Caddy + Let's Encrypt (nip.io); never abort boot on a hiccup ---
+set +e
+apt-get install -y debian-keyring debian-archive-keyring apt-transport-https
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
+apt-get update -y
+apt-get install -y caddy
+cat >/etc/caddy/Caddyfile <<CADDY
+$nipHost {
+    reverse_proxy 127.0.0.1:8000
+}
+CADDY
+systemctl enable caddy
+systemctl restart caddy
+"@
+}
+$userData = $userData.Replace("__PRESIGNED__", $presigned).Replace("__AIPROVIDER__", $aiProvider).Replace("__GEMINILINE__", $geminiLine).Replace("__UVICORNBIND__", $uvicornBind).Replace("__CADDYBLOCK__", $caddyBlock)
 $udFile = Join-Path $env:TEMP "memrhythm-userdata.sh"
 Set-Content -Path $udFile -Value $userData -Encoding ascii -NoNewline
 
@@ -184,13 +228,15 @@ Write-Host ""
 Write-Host "==================================================================" -ForegroundColor Green
 Write-Host " Memory Rhythm is deploying. Bootstrap (apt + pip) takes ~2-4 min." -ForegroundColor Green
 Write-Host ""
-Write-Host "   URL:        http://$dns/" -ForegroundColor White
-Write-Host "   IP:         http://$ip/" -ForegroundColor White
+$primaryUrl = if ($Https) { "https://$nipHost/" } else { "http://$dns/" }
+Write-Host "   URL:        $primaryUrl" -ForegroundColor White
+if (-not $Https) { Write-Host "   IP:         http://$ip/" -ForegroundColor White }
+if ($Https) { Write-Host "   (HTTP $ip redirects to HTTPS; cert issues ~30-90s after boot)" -ForegroundColor DarkGray }
 $aiMode = if ($Gemini) { "Gemini LLM (두뇌+입); STT/TTS/image/embedding=mock" } else { "mock" }
 Write-Host "   AI mode:    $aiMode" -ForegroundColor White
 Write-Host "   Instance:   $instId  ($InstanceType, $Region)" -ForegroundColor White
 if ($KeyName) { Write-Host "   SSH:        ssh ubuntu@$dns  (logs: journalctl -u memrhythm -f)" -ForegroundColor DarkGray }
 Write-Host ""
-Write-Host " Poll readiness:  curl http://$dns/api/health" -ForegroundColor DarkGray
+Write-Host " Poll readiness:  curl ${primaryUrl}api/health" -ForegroundColor DarkGray
 Write-Host " Tear down:       pwsh deploy/destroy-aws.ps1 -Region $Region" -ForegroundColor DarkGray
 Write-Host "==================================================================" -ForegroundColor Green
