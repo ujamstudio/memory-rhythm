@@ -52,9 +52,9 @@ function chipStyle(active: boolean): CSSProperties {
     display: "inline-flex",
     alignItems: "center",
     borderRadius: "9999px",
-    padding: "clamp(5px, 1.5vw, 8px) clamp(10px, 3vw, 15px)",
+    padding: "4px 9px",
     fontFamily: '"Gothic A1", sans-serif',
-    fontSize: "clamp(12px, 3vw, 15px)",
+    fontSize: "12px",
     fontWeight: 800,
     cursor: "pointer",
     whiteSpace: "nowrap",
@@ -559,10 +559,10 @@ export default function Patient() {
           // height:100% + minHeight:0 give the inner chat a definite box to
           // scroll within, so the frame stays fixed.
           width: "100%",
-          maxWidth: "760px",
+          maxWidth: "440px",
           height: "100%",
           minHeight: 0,
-          borderRadius: "clamp(16px, 4vw, 28px)",
+          borderRadius: "clamp(12px, 3vw, 20px)",
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
@@ -575,29 +575,29 @@ export default function Patient() {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            padding:
-              "clamp(10px, 3vw, 18px) clamp(14px, 4vw, 28px) clamp(8px, 2vw, 12px)",
+            padding: "8px 11px 7px",
             fontFamily: '"Gothic A1", sans-serif',
-            borderBottom: "1.5px solid rgba(198,117,55,0.14)",
+            borderBottom: "1px solid rgba(198,117,55,0.14)",
           }}
         >
           <Link href="/">
             <span
               style={{
-                fontSize: "clamp(14px, 3.5vw, 18px)",
+                fontSize: "13px",
                 color: "#6E6051",
                 fontWeight: 700,
                 cursor: "pointer",
+                whiteSpace: "nowrap",
               }}
             >
-              ← 처음으로
+              ←
             </span>
           </Link>
 
-          <div style={{ textAlign: "center" }}>
+          <div style={{ textAlign: "center", lineHeight: 1.1 }}>
             <div
               style={{
-                fontSize: "clamp(12px, 3vw, 16px)",
+                fontSize: "10px",
                 color: "#6E6051",
                 fontWeight: 700,
               }}
@@ -606,7 +606,7 @@ export default function Patient() {
             </div>
             <div
               style={{
-                fontSize: "clamp(16px, 4vw, 22px)",
+                fontSize: "14px",
                 color: "#C67537",
                 fontWeight: 900,
               }}
@@ -780,9 +780,8 @@ export default function Patient() {
             overflowY: "auto",
             display: "flex",
             flexDirection: "column",
-            gap: "clamp(12px, 3vw, 20px)",
-            padding:
-              "clamp(14px, 4vw, 24px) clamp(4px, 1.5vw, 8px) clamp(10px, 3vw, 16px)",
+            gap: "7px",
+            padding: "10px 6px 8px",
             minHeight: 0,
           }}
         >
@@ -821,7 +820,7 @@ export default function Patient() {
         </div>
 
 
-        {/* Typed input */}
+        {/* Compact messenger-style input bar: hint · 40Hz · input · mic/send */}
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -830,12 +829,74 @@ export default function Patient() {
           style={{
             flexShrink: 0,
             display: "flex",
-            gap: "8px",
-            padding: "0 clamp(12px, 4vw, 28px) 8px",
+            alignItems: "center",
+            gap: "6px",
+            padding: "7px 9px 9px",
+            borderTop: "1px solid rgba(198,117,55,0.14)",
+            background: "rgba(244,235,221,0.7)",
+            backdropFilter: "blur(8px)",
           }}
         >
+          {/* Hint */}
+          <button
+            type="button"
+            onClick={askForHint}
+            disabled={maxHint || awaiting || controlsLocked}
+            className="phys-btn"
+            aria-label={maxHint ? "힌트를 모두 봤어요" : "힌트 보기"}
+            title="힌트"
+            style={{
+              flexShrink: 0,
+              width: "34px",
+              height: "34px",
+              borderRadius: "50%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: maxHint ? "#E3D2B8" : "linear-gradient(#EAD0A4, #D7B279)",
+              opacity: maxHint ? 0.6 : 1,
+              color: "#4a3520",
+              border: "none",
+              cursor: maxHint || awaiting ? "default" : "pointer",
+            }}
+          >
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M9 18h6M10 21h4" />
+              <path d="M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.4 1 2.5h6c0-1.1.3-1.8 1-2.5A6 6 0 0 0 12 3z" />
+            </svg>
+          </button>
+
+          {/* 40Hz sensory toggle */}
+          <button
+            type="button"
+            onClick={toggleStim}
+            aria-pressed={stimOn}
+            className="phys-btn"
+            aria-label={`감각 자극 ${stimOn ? "끄기" : "켜기"}`}
+            title="감각 자극 (40Hz)"
+            style={{
+              flexShrink: 0,
+              width: "34px",
+              height: "34px",
+              borderRadius: "50%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontFamily: '"Gothic A1", sans-serif',
+              fontSize: "11px",
+              fontWeight: 800,
+              background: stimOn ? "linear-gradient(#D98040, #C67537)" : "#EFE2CC",
+              color: stimOn ? "#FCF8F1" : "#8a6a3f",
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            40
+          </button>
+
+          {/* Text input */}
           <label htmlFor="patient-input" className="sr-only">
-            대답을 입력하세요
+            메시지 입력
           </label>
           <input
             id="patient-input"
@@ -848,194 +909,62 @@ export default function Patient() {
                 ? "시뮬레이션 진행 중…"
                 : listening
                   ? "🎤 듣는 중…"
-                  : "여기에 말을 입력하세요…"
+                  : "메시지 입력…"
             }
             style={{
               flex: 1,
-              borderRadius: "14px",
+              minWidth: 0,
+              borderRadius: "9999px",
               border: "1.5px solid rgba(198,117,55,0.3)",
-              padding: "12px 18px",
+              padding: "9px 14px",
               fontFamily: '"Gothic A1", sans-serif',
-              fontSize: "clamp(15px, 3.5vw, 19px)",
-              background: "rgba(255,255,255,0.85)",
+              fontSize: "15px",
+              background: "rgba(255,255,255,0.9)",
               color: "#33291F",
               outline: "none",
             }}
           />
-          {/* Always-visible 보내기 button so typing is a real, discoverable path
-              (Enter/mic are not obvious to 어르신). Disabled when empty/awaiting. */}
-          <button
-            type="submit"
-            disabled={awaiting || controlsLocked || listening || !input.trim()}
-            className="phys-btn"
-            aria-label="대답 보내기"
-            style={{
-              flexShrink: 0,
-              borderRadius: "14px",
-              padding: "0 clamp(18px, 5vw, 28px)",
-              minWidth: "clamp(64px, 18vw, 96px)",
-              fontFamily: '"Gothic A1", sans-serif',
-              fontSize: "clamp(15px, 3.5vw, 19px)",
-              fontWeight: 800,
-              color: "#FFFFFF",
-              background: awaiting || !input.trim() ? "#C2A98E" : "#C67537",
-              border: "none",
-              cursor: awaiting || !input.trim() ? "default" : "pointer",
-            }}
-          >
-            보내기
-          </button>
-        </form>
 
-        {/* Footer: hint · big mic · 40Hz */}
-        <div
-          style={{
-            flexShrink: 0,
-            borderTop: "1.5px solid rgba(198,117,55,0.14)",
-            padding:
-              "clamp(10px, 3vw, 18px) clamp(16px, 4vw, 32px) clamp(14px, 4vw, 22px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "clamp(10px, 3vw, 20px)",
-            flexWrap: "wrap",
-            background: "rgba(244,235,221,0.7)",
-            backdropFilter: "blur(8px)",
-          }}
-        >
-          {/* Hint */}
-          <button
-            type="button"
-            onClick={askForHint}
-            disabled={maxHint || awaiting || controlsLocked}
-            className="phys-btn"
-            aria-label={maxHint ? "힌트를 모두 봤어요" : "힌트 보기"}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "clamp(6px, 1.5vw, 10px)",
-              borderRadius: "9999px",
-              padding: "clamp(10px, 2.5vw, 16px) clamp(16px, 4vw, 28px)",
-              fontFamily: '"Gothic A1", sans-serif',
-              fontSize: "clamp(16px, 4vw, 24px)",
-              fontWeight: 800,
-              cursor: maxHint || awaiting ? "default" : "pointer",
-              background: maxHint ? "#E3D2B8" : "linear-gradient(#EAD0A4, #D7B279)",
-              opacity: maxHint ? 0.7 : 1,
-              boxShadow: maxHint
-                ? "inset 0 2px 0 rgba(255,255,255,0.4), 0 4px 0 #a8824a"
-                : "inset 0 2px 0 rgba(255,255,255,0.6), 0 6px 0 #a8824a, 0 8px 16px rgba(110,80,40,0.25)",
-              color: "#4a3520",
-              border: "none",
-              flexShrink: 0,
-            }}
-          >
-            <svg
-              width="28"
-              height="28"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M9 18h6M10 21h4" />
-              <path d="M12 3a6 6 0 0 0-4 10.5c.7.7 1 1.4 1 2.5h6c0-1.1.3-1.8 1-2.5A6 6 0 0 0 12 3z" />
-            </svg>
-            {maxHint ? "다 봤어요" : "힌트"}
-          </button>
-
-          {/* Big mic / send */}
+          {/* Mic / send */}
           <button
             type="button"
             onClick={onMic}
             disabled={awaiting || controlsLocked}
             aria-label={`음성으로 대답: ${micLabel}`}
             aria-pressed={micActive}
+            title={micLabel}
             className={`patient-mic ${micActive ? "mic-pulse" : "phys-btn"}`}
             style={{
-              width: "clamp(120px, 30vw, 156px)",
-              height: "clamp(120px, 30vw, 156px)",
+              flexShrink: 0,
+              width: "40px",
+              height: "40px",
               borderRadius: "50%",
               display: "flex",
-              flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
-              gap: "4px",
               cursor: awaiting ? "default" : "pointer",
               border: "none",
               background: micActive
                 ? "linear-gradient(#e05a2b, #c44015)"
                 : "linear-gradient(#D98040, #C67537)",
-              boxShadow: micActive
-                ? "inset 0 3px 0 rgba(255,255,255,0.3), 0 8px 0 #8a3a10"
-                : "inset 0 3px 0 rgba(255,255,255,0.35), 0 8px 0 #8a4a1f, 0 12px 20px rgba(130,70,30,0.35)",
+              boxShadow: "0 2px 6px rgba(130,70,30,0.3)",
               color: "white",
-              fontFamily: '"Gothic A1", sans-serif',
-              transition: "background 0.4s ease, box-shadow 0.3s ease",
-              flexShrink: 0,
+              transition: "background 0.3s ease",
             }}
           >
-            <svg
-              width="42"
-              height="42"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <rect x="9" y="3" width="6" height="11" rx="3" />
-              <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
-            </svg>
-            <span
-              style={{
-                fontSize: "clamp(14px, 3.5vw, 20px)",
-                fontWeight: 800,
-                letterSpacing: "-0.01em",
-              }}
-            >
-              {micLabel}
-            </span>
+            {input.trim() && !listening ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
+              </svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="9" y="3" width="6" height="11" rx="3" />
+                <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+              </svg>
+            )}
           </button>
+        </form>
 
-          {/* 감각 자극 (40Hz) stimulation toggle */}
-          <button
-            type="button"
-            onClick={toggleStim}
-            aria-label={`감각 자극 ${stimOn ? "끄기" : "켜기"}`}
-            aria-pressed={stimOn}
-            className="phys-btn"
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: "2px",
-              borderRadius: "9999px",
-              padding: "clamp(10px, 2.5vw, 16px) clamp(14px, 3.5vw, 22px)",
-              fontFamily: '"Gothic A1", sans-serif',
-              fontSize: "clamp(13px, 3vw, 17px)",
-              fontWeight: 800,
-              cursor: "pointer",
-              background: stimOn ? "linear-gradient(#D98040, #C67537)" : "#EFE2CC",
-              color: stimOn ? "#FCF8F1" : "#8a6a3f",
-              boxShadow: stimOn
-                ? "inset 0 2px 0 rgba(255,255,255,0.3), 0 5px 0 #8a4a1f"
-                : "inset 0 2px 0 rgba(255,255,255,0.5), 0 4px 0 #c9b48f",
-              border: "none",
-              flexShrink: 0,
-            }}
-          >
-            <span>감각 자극</span>
-            <span style={{ fontSize: "clamp(10px, 2.5vw, 12px)", fontWeight: 700 }}>
-              {stimOn ? "켜짐" : "꺼짐"}
-            </span>
-          </button>
-        </div>
       </div>
 
       {/* Slide-in drawer: 추론(reasoning) / 앨범(autobiography) */}

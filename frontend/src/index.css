@@ -166,10 +166,6 @@
    usable. (Addresses the landscape layout breakage.) */
 @media (max-height: 480px) {
   .hint-polaroid { display: none !important; }
-  .patient-mic {
-    width: clamp(72px, 16vw, 96px) !important;
-    height: clamp(72px, 16vw, 96px) !important;
-  }
 }
 
 /* Visually-hidden but screen-reader-available (accessible labels). */
