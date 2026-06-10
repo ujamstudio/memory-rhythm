@@ -30,6 +30,7 @@ import { stageLabel } from "../protocol";
 import { SCENARIOS } from "../lib/scenarios";
 import { WSClient } from "../lib/ws";
 import { useClock } from "../lib/useClock";
+import { useSpeechInput } from "../lib/useSpeechInput";
 import { ReasoningPanel } from "../components/ReasoningPanel";
 import { useGammaTone } from "../components/GammaTone";
 import { SafetyNotice, StimulationOffBar } from "../components/SafetyNotice";
@@ -86,7 +87,6 @@ export default function Patient() {
   const [stage, setStage] = useState(1);
   const [hintLevel, setHintLevel] = useState(0);
   const [awaiting, setAwaiting] = useState(false);
-  const [listening, setListening] = useState(false);
   const [input, setInput] = useState("");
   // Voice-first: the mic is the default input; tapping ⌨ reveals the text field.
   const [typing, setTyping] = useState(false);
@@ -112,8 +112,6 @@ export default function Patient() {
   const sessionIdRef = useRef(DEMO_SESSION_ID);
   const activePatientRef = useRef(patientId);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  // Browser SpeechRecognition instance (Web Speech API) for voice answers.
-  const recognitionRef = useRef<any>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const gamma = useGammaTone();
   const clock = useClock();
@@ -257,18 +255,6 @@ export default function Patient() {
     return () => clearTimeout(t);
   }, [awaiting]);
 
-  // Stop any in-flight speech recognition on unmount.
-  useEffect(
-    () => () => {
-      try {
-        recognitionRef.current?.stop();
-      } catch {
-        /* ignore */
-      }
-    },
-    [],
-  );
-
   // ---- Actions ----------------------------------------------------------
 
   const sendText = useCallback((text: string) => {
@@ -290,6 +276,46 @@ export default function Patient() {
     setAwaiting(true);
     setInput("");
   }, []);
+
+  // Voice answer via the Web Speech API (Korean), shared with the survey through
+  // useSpeechInput. The mic is the default input; the recognized text is sent
+  // automatically on end. When voice is unavailable (no https / unsupported /
+  // blocked), drop into the text field instead.
+  const fallbackToTyping = useCallback((reason: string) => {
+    setMessages((m) =>
+      m.some((x) => x.text === reason) ? m : [...m, { role: "system", text: reason }],
+    );
+    setTyping(true);
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }, []);
+
+  const {
+    listening,
+    start: startListening,
+    stop: stopListening,
+  } = useSpeechInput({
+    onInterim: (t) => setInput(t),
+    onFinal: (t) => sendText(t),
+    onUnheard: () => {
+      setInput("");
+      setMessages((m) => [
+        ...m,
+        { role: "system", text: "🎤 잘 못 들었어요. 한 번 더 또박또박 말씀해 주세요." },
+      ]);
+    },
+    onBlocked: () =>
+      fallbackToTyping(
+        "🎤 마이크 권한이 막혀 있어요. 브라우저의 마이크 권한을 허용하거나, 아래에 글로 적어 주세요.",
+      ),
+    onInsecure: () =>
+      fallbackToTyping(
+        "🎤 음성 입력은 보안 연결(https)에서만 돼요. 아래에 글로 말씀을 적어 주세요.",
+      ),
+    onUnsupported: () =>
+      fallbackToTyping(
+        "🎤 이 브라우저는 음성 입력을 지원하지 않아요. 아래에 글로 적어 주세요.",
+      ),
+  });
 
   const askForHint = useCallback(() => {
     // Hint level is decided by the 두뇌; nudge it by asking for help. The
@@ -353,103 +379,6 @@ export default function Patient() {
     }, 2200);
     return () => clearTimeout(t);
   }, [simRunning, connected, awaiting, listening, sendText, messages.length]);
-
-  // Voice answer via the Web Speech API (Korean). Clicking the mic starts
-  // listening; the recognized text is sent automatically. Falls back to the
-  // text input when the browser has no SpeechRecognition (e.g. Firefox).
-  // One-time helper: tell the patient to type instead, and focus the input.
-  const fallbackToTyping = useCallback((reason: string) => {
-    setListening(false);
-    setMessages((m) =>
-      m.some((x) => x.text === reason)
-        ? m
-        : [...m, { role: "system", text: reason }],
-    );
-    inputRef.current?.focus();
-  }, []);
-
-  const startListening = useCallback(() => {
-    const SR =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
-    // The Web Speech API only runs in a secure context (https:// or localhost).
-    // On the plain-http demo it throws/!allowed, so guide the patient to type.
-    if (!window.isSecureContext) {
-      fallbackToTyping("🎤 음성 입력은 보안 연결(https)에서만 돼요. 아래에 글로 말씀을 적어 주세요.");
-      return;
-    }
-    if (!SR) {
-      fallbackToTyping("🎤 이 브라우저는 음성 입력을 지원하지 않아요. 아래에 글로 적어 주세요.");
-      return;
-    }
-    try {
-      const rec = new SR();
-      rec.lang = "ko-KR";
-      rec.continuous = false;
-      // Safari/webkit only delivers transcripts when interimResults is ON; with
-      // it off, onresult often never fires and the mic looks stuck on "듣는 중".
-      rec.interimResults = true;
-      rec.maxAlternatives = 1;
-
-      let finalText = "";
-      let lastInterim = "";
-      let errored = "";
-
-      rec.onresult = (e: any) => {
-        // Loop ALL results (Safari indexes differently than Chrome) and split
-        // final vs interim by isFinal rather than assuming results[0].
-        let interim = "";
-        for (let i = e.resultIndex ?? 0; i < e.results.length; i++) {
-          const r = e.results[i];
-          const t = r?.[0]?.transcript ?? "";
-          if (r?.isFinal) finalText += t;
-          else interim += t;
-        }
-        lastInterim = interim;
-        // Live feedback in the input box so the patient SEES it's hearing them.
-        setInput((finalText + interim).trim());
-      };
-      rec.onerror = (e: any) => {
-        errored = e?.error || "error";
-      };
-      // Send on END (Safari fires onend reliably; onresult-final is flaky). Use
-      // the accumulated final, or the last interim as a fallback.
-      rec.onend = () => {
-        setListening(false);
-        const text = (finalText || lastInterim).trim();
-        finalText = "";
-        lastInterim = "";
-        if (text) {
-          sendText(text);
-          return;
-        }
-        if (errored === "not-allowed" || errored === "service-not-allowed") {
-          fallbackToTyping("🎤 마이크 권한이 막혀 있어요. 브라우저의 마이크 권한을 허용하거나, 아래에 글로 적어 주세요.");
-        } else {
-          setInput("");
-          setMessages((m) => [
-            ...m,
-            { role: "system", text: "🎤 잘 못 들었어요. 한 번 더 또박또박 말씀해 주세요." },
-          ]);
-        }
-      };
-      recognitionRef.current = rec;
-      setInput("");
-      setListening(true);
-      rec.start();
-    } catch {
-      fallbackToTyping("🎤 음성 입력을 시작할 수 없어요. 아래에 글로 적어 주세요.");
-    }
-  }, [sendText, fallbackToTyping]);
-
-  const stopListening = useCallback(() => {
-    try {
-      recognitionRef.current?.stop();
-    } catch {
-      /* ignore */
-    }
-    setListening(false);
-  }, []);
 
   // The big mic button: stop if listening, send typed text if present,
   // otherwise start voice capture.
