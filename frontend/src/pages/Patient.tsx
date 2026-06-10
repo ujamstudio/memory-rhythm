@@ -88,6 +88,8 @@ export default function Patient() {
   const [awaiting, setAwaiting] = useState(false);
   const [listening, setListening] = useState(false);
   const [input, setInput] = useState("");
+  // Voice-first: the mic is the default input; tapping ⌨ reveals the text field.
+  const [typing, setTyping] = useState(false);
 
   // 감각 자극 (gamma ring + tone) — share one consent gate.
   const [stimOn, setStimOn] = useState(false);
@@ -582,12 +584,21 @@ export default function Patient() {
         >
           <Link href="/">
             <span
+              aria-label="처음으로"
               style={{
-                fontSize: "13px",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "30px",
+                height: "30px",
+                borderRadius: "50%",
+                background: "rgba(255,255,255,0.55)",
+                border: "1px solid rgba(198,117,55,0.2)",
+                fontSize: "15px",
                 color: "#6E6051",
                 fontWeight: 700,
                 cursor: "pointer",
-                whiteSpace: "nowrap",
+                flexShrink: 0,
               }}
             >
               ←
@@ -781,8 +792,11 @@ export default function Patient() {
             display: "flex",
             flexDirection: "column",
             gap: "7px",
-            padding: "10px 6px 8px",
+            padding: "12px 8px 10px",
             minHeight: 0,
+            // Soft warm "chat wallpaper" for depth.
+            background:
+              "radial-gradient(120% 60% at 50% 0%, rgba(255,250,242,0.55), transparent 70%)",
           }}
         >
           {messages.length === 0 && !awaiting && (
@@ -820,21 +834,19 @@ export default function Patient() {
         </div>
 
 
-        {/* Compact messenger-style input bar: hint · 40Hz · input · mic/send */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            sendText(input);
-          }}
+        {/* Voice-first input bar: the mic pill is the primary action; the ⌨ on the
+            right reveals a text field for typing. */}
+        <div
           style={{
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
-            gap: "6px",
-            padding: "7px 9px 9px",
-            borderTop: "1px solid rgba(198,117,55,0.14)",
-            background: "rgba(244,235,221,0.7)",
-            backdropFilter: "blur(8px)",
+            gap: "7px",
+            padding: "8px 10px 11px",
+            borderTop: "1px solid rgba(198,117,55,0.16)",
+            background:
+              "linear-gradient(180deg, rgba(247,239,226,0.45), rgba(243,233,217,0.92))",
+            backdropFilter: "blur(10px)",
           }}
         >
           {/* Hint */}
@@ -846,17 +858,11 @@ export default function Patient() {
             aria-label={maxHint ? "힌트를 모두 봤어요" : "힌트 보기"}
             title="힌트"
             style={{
-              flexShrink: 0,
-              width: "34px",
-              height: "34px",
-              borderRadius: "50%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
+              flexShrink: 0, width: "36px", height: "36px", borderRadius: "50%",
+              display: "flex", alignItems: "center", justifyContent: "center",
               background: maxHint ? "#E3D2B8" : "linear-gradient(#EAD0A4, #D7B279)",
-              opacity: maxHint ? 0.6 : 1,
-              color: "#4a3520",
-              border: "none",
+              opacity: maxHint ? 0.55 : 1, color: "#5a4226", border: "none",
+              boxShadow: maxHint ? "none" : "0 1px 3px rgba(150,110,60,0.25)",
               cursor: maxHint || awaiting ? "default" : "pointer",
             }}
           >
@@ -866,7 +872,7 @@ export default function Patient() {
             </svg>
           </button>
 
-          {/* 40Hz sensory toggle */}
+          {/* 40Hz */}
           <button
             type="button"
             onClick={toggleStim}
@@ -875,95 +881,139 @@ export default function Patient() {
             aria-label={`감각 자극 ${stimOn ? "끄기" : "켜기"}`}
             title="감각 자극 (40Hz)"
             style={{
-              flexShrink: 0,
-              width: "34px",
-              height: "34px",
-              borderRadius: "50%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontFamily: '"Gothic A1", sans-serif',
-              fontSize: "11px",
-              fontWeight: 800,
+              flexShrink: 0, width: "36px", height: "36px", borderRadius: "50%",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontFamily: '"Gothic A1", sans-serif', fontSize: "11px", fontWeight: 800,
               background: stimOn ? "linear-gradient(#D98040, #C67537)" : "#EFE2CC",
-              color: stimOn ? "#FCF8F1" : "#8a6a3f",
-              border: "none",
+              color: stimOn ? "#FCF8F1" : "#8a6a3f", border: "none",
+              boxShadow: stimOn ? "0 2px 8px rgba(180,90,40,0.4)" : "none",
               cursor: "pointer",
             }}
           >
             40
           </button>
 
-          {/* Text input */}
-          <label htmlFor="patient-input" className="sr-only">
-            메시지 입력
-          </label>
-          <input
-            id="patient-input"
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            disabled={controlsLocked || listening}
-            placeholder={
-              controlsLocked
-                ? "시뮬레이션 진행 중…"
-                : listening
-                  ? "🎤 듣는 중…"
-                  : "메시지 입력…"
-            }
-            style={{
-              flex: 1,
-              minWidth: 0,
-              borderRadius: "9999px",
-              border: "1.5px solid rgba(198,117,55,0.3)",
-              padding: "9px 14px",
-              fontFamily: '"Gothic A1", sans-serif',
-              fontSize: "15px",
-              background: "rgba(255,255,255,0.9)",
-              color: "#33291F",
-              outline: "none",
-            }}
-          />
-
-          {/* Mic / send */}
-          <button
-            type="button"
-            onClick={onMic}
-            disabled={awaiting || controlsLocked}
-            aria-label={`음성으로 대답: ${micLabel}`}
-            aria-pressed={micActive}
-            title={micLabel}
-            className={`patient-mic ${micActive ? "mic-pulse" : "phys-btn"}`}
-            style={{
-              flexShrink: 0,
-              width: "40px",
-              height: "40px",
-              borderRadius: "50%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              cursor: awaiting ? "default" : "pointer",
-              border: "none",
-              background: micActive
-                ? "linear-gradient(#e05a2b, #c44015)"
-                : "linear-gradient(#D98040, #C67537)",
-              boxShadow: "0 2px 6px rgba(130,70,30,0.3)",
-              color: "white",
-              transition: "background 0.3s ease",
-            }}
-          >
-            {input.trim() && !listening ? (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
-              </svg>
-            ) : (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="9" y="3" width="6" height="11" rx="3" />
-                <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
-              </svg>
-            )}
-          </button>
-        </form>
+          {typing ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                sendText(input);
+              }}
+              style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "7px" }}
+            >
+              <label htmlFor="patient-input" className="sr-only">메시지 입력</label>
+              <input
+                id="patient-input"
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                disabled={controlsLocked}
+                placeholder={controlsLocked ? "시뮬레이션 진행 중…" : "메시지 입력…"}
+                style={{
+                  flex: 1, minWidth: 0, borderRadius: "9999px",
+                  border: "1.5px solid rgba(198,117,55,0.3)", padding: "10px 15px",
+                  fontFamily: '"Gothic A1", sans-serif', fontSize: "15px",
+                  background: "rgba(255,255,255,0.95)", color: "#33291F", outline: "none",
+                }}
+              />
+              <button
+                type="submit"
+                disabled={awaiting || controlsLocked || !input.trim()}
+                aria-label="보내기"
+                style={{
+                  flexShrink: 0, width: "42px", height: "42px", borderRadius: "50%",
+                  display: "flex", alignItems: "center", justifyContent: "center", border: "none",
+                  background: awaiting || !input.trim() ? "#C2A98E" : "linear-gradient(135deg, #D98040, #C67537)",
+                  boxShadow: "0 2px 8px rgba(130,70,30,0.3)", color: "#fff",
+                  cursor: awaiting || !input.trim() ? "default" : "pointer",
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => setTyping(false)}
+                title="음성으로"
+                aria-label="음성으로 전환"
+                style={{
+                  flexShrink: 0, width: "36px", height: "36px", borderRadius: "50%",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  background: "rgba(255,255,255,0.85)", border: "1.5px solid rgba(198,117,55,0.25)",
+                  color: "#8a6a3f", cursor: "pointer",
+                }}
+              >
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="9" y="3" width="6" height="11" rx="3" />
+                  <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+                </svg>
+              </button>
+            </form>
+          ) : (
+            <>
+              {/* Primary mic */}
+              <button
+                type="button"
+                onClick={onMic}
+                disabled={awaiting || controlsLocked}
+                aria-label={`음성으로 대답: ${micLabel}`}
+                aria-pressed={micActive}
+                className={`patient-mic ${listening ? "mic-pulse" : "phys-btn"}`}
+                style={{
+                  flex: 1, minWidth: 0, height: "46px", borderRadius: "9999px",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: "9px",
+                  border: "none", cursor: awaiting || controlsLocked ? "default" : "pointer",
+                  background: listening
+                    ? "linear-gradient(135deg, #e8602f, #c44015)"
+                    : "linear-gradient(135deg, #DD8643, #C16E32)",
+                  boxShadow: listening
+                    ? "0 5px 18px rgba(200,70,20,0.42)"
+                    : "0 3px 12px rgba(160,90,40,0.32)",
+                  color: "#FFF7EE", fontFamily: '"Gothic A1", sans-serif',
+                  fontSize: "15px", fontWeight: 800, letterSpacing: "-0.01em",
+                  transition: "background .3s ease, box-shadow .3s ease",
+                  opacity: awaiting && !listening ? 0.72 : 1,
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="9" y="3" width="6" height="11" rx="3" />
+                  <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+                </svg>
+                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {controlsLocked
+                    ? "시뮬레이션 진행 중…"
+                    : awaiting
+                      ? "잠시만요…"
+                      : listening
+                        ? input.trim() || "듣는 중…"
+                        : "눌러서 말하기"}
+                </span>
+              </button>
+              {/* Keyboard toggle */}
+              <button
+                type="button"
+                onClick={() => {
+                  setTyping(true);
+                  setTimeout(() => inputRef.current?.focus(), 0);
+                }}
+                title="글자로 입력"
+                aria-label="글자로 입력"
+                style={{
+                  flexShrink: 0, width: "36px", height: "36px", borderRadius: "50%",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  background: "rgba(255,255,255,0.85)", border: "1.5px solid rgba(198,117,55,0.25)",
+                  color: "#8a6a3f", cursor: "pointer",
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="2" y="6" width="20" height="12" rx="2" />
+                  <path d="M7 10h.01M11 10h.01M15 10h.01M8 14h8" />
+                </svg>
+              </button>
+            </>
+          )}
+        </div>
 
       </div>
 
