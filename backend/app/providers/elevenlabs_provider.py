@@ -61,10 +61,23 @@ class ElevenLabsTTS(TTSProvider):
             "accept": "audio/mpeg",
             "content-type": "application/json",
         }
+        # More natural/expressive Korean than the flat 0.5/0.75 default: slightly
+        # lower stability lets the voice vary its intonation, higher similarity +
+        # speaker boost keep it warm and on-voice, a touch of style adds emotion.
+        # v3 uses a different settings model, so only send the basic pair there.
+        if "v3" in self._model:
+            voice_settings = {"stability": 0.5, "similarity_boost": 0.85}
+        else:
+            voice_settings = {
+                "stability": 0.4,
+                "similarity_boost": 0.85,
+                "style": 0.30,
+                "use_speaker_boost": True,
+            }
         payload = {
             "text": text,
             "model_id": self._model,
-            "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+            "voice_settings": voice_settings,
         }
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(url, params=params, headers=headers, json=payload)
