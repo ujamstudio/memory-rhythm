@@ -20,6 +20,7 @@ Two code paths:
 from __future__ import annotations
 
 import logging
+import re
 import time
 
 from app.providers.base import REASONING_MODEL, Providers
@@ -40,6 +41,23 @@ _HESITATION_MARKERS: tuple[str, ...] = (
     "모르", "기억 안", "기억이 안", "글쎄", "생각이 안", "잘 모", "음...",
     "몰라", "기억 못", "가물", "떠오르지",
 )
+
+# Words that signal the patient is DENYING the AI's suggestion ("no, that's not
+# it"). Critical: a denial must NEVER be read as recall, even when it repeats the
+# target keyword ("시장은 아니야"). These are deliberately FULLER denial forms, not
+# the bare interjection "아니" — elderly speakers routinely open an affirmative
+# recall with the filler "아니, 글쎄…", and idioms like "아니나 다를까"/"여간 아닌" are
+# positive, so a bare "아니"/"아닌" substring would wrongly suppress real recall.
+_NEGATION_MARKERS: tuple[str, ...] = (
+    "아니야", "아니에요", "아니예요", "아녜요", "아니라", "아니거든",
+    "아닌데", "아냐", "그게 아니", "그건 아니", "그런 적 없", "그런 거 없",
+    "한 적 없", "간 적 없", "안 갔", "안 가봤", "못 갔", "안 했",
+    "맞지 않아", "맞지 않다", "틀렸", "틀려",
+)
+
+# Clause delimiters: a denial in one clause ("…은 안 갔어") must not wipe out a
+# genuine recall in another ("시장만 갔지"), so negation is judged per clause.
+_CLAUSE_SPLIT = re.compile(r"[,.!?]|말고|하지만|지만|는데")
 
 # Korean reason strings for each hint level (shown verbatim in the panel).
 _HINT_REASONS: dict[int, str] = {
@@ -99,7 +117,19 @@ class Reasoner:
         # generic place baseline. Anchors come first so the person's own memory
         # (나물·딸·…) is what gets celebrated; substring match catches '딸이랑'->'딸'.
         recall_targets = list(state.recall_anchors) + list(_RECALL_KEYWORDS)
-        recall_kw = [k for k in recall_targets if k and k in text]
+        # Judge negation per clause so "시장 말고는 안 갔어, 시장만 갔지" keeps the real
+        # 시장 recall (one clause denies, another affirms). A keyword only counts
+        # when it appears in a clause that is NOT locally negated.
+        recall_kw: list[str] = []
+        any_negated_clause = False
+        for clause in _CLAUSE_SPLIT.split(text):
+            if any(m in clause for m in _NEGATION_MARKERS):
+                any_negated_clause = True
+                continue
+            recall_kw += [k for k in recall_targets if k and k in clause]
+        recall_kw = list(dict.fromkeys(recall_kw))  # dedupe, preserve order
+        # Treat the turn as a denial only when nothing was genuinely recalled.
+        negated = any_negated_clause and not recall_kw
         hesitated = any(m in text for m in _HESITATION_MARKERS)
 
         stage = state.stage
@@ -130,6 +160,17 @@ class Reasoner:
                 reason = (
                     f"구체적 장소 키워드 '{recall_kw[0]}' 회상 성공. "
                     "자서전 페이지를 생성하고 행동 수행(Stage 3)으로 전환합니다."
+                )
+            elif negated and not hesitated:
+                # Patient denied the current lead (and is NOT also struggling —
+                # a combined "아니야, 잘 모르겠어" should still escalate, handled by
+                # the hesitation branch below). Do NOT advance and do NOT keep
+                # pushing the same (wrong) cue — back off a notch and re-approach
+                # from a different memory so we never insist on a rejected answer.
+                hint_level = max(state.hint_level - 1, 0)
+                reason = (
+                    "환자가 방금 제안을 '아니라고' 부정했습니다. 그 단서는 접고, "
+                    "단서 수위를 낮춰 다른 기억으로 부드럽게 화제를 바꿔 다시 접근합니다."
                 )
             elif hesitated or not keywords:
                 hint_level = min(state.hint_level + 1, 4)
@@ -192,6 +233,9 @@ class Reasoner:
             "다음 단계로 전환합니다. 특히 아래 '이 어르신이 또렷이 기억하는 단서'에 있는 "
             "내용을 환자가 말하면 그 사람만의 진짜 기억이므로 회상 성공으로 인정하세요. "
             "환자가 머뭇거림 없이 잘 따라오면 힌트를 올리지 말고 유지하세요. "
+            "⚠️환자가 '아니요/아니야/그런 적 없어'처럼 제안을 부정하면, 그 발화에 키워드가 들어 "
+            "있더라도 절대 recall_detected=true로 보지 마세요(부정은 회상이 아닙니다). 그럴 땐 "
+            "단계를 올리지 말고 그 단서는 접은 뒤 다른 기억으로 방향을 바꾸세요. "
             "정답을 강요하지 말고 부드럽게 유도하세요. 반드시 JSON만 출력하세요."
         )
         history = "\n".join(f"- {t}" for t in state.user_texts[-5:]) or "(없음)"

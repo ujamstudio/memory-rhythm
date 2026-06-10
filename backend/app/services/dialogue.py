@@ -124,6 +124,14 @@ class DialogueService:
         recall = bool(decision.get("recall_detected", False))
         keyword = context.get("keyword") or self._first_keyword(decision)
         patient_name = context.get("patient_name", "")
+        # Whether we actually KNOW any real memory to lead with. Derive this from
+        # lead_topics (= the patient's recall anchors: survey keywords + already
+        # recalled memories) ONLY — NOT from `persona`, which always carries at
+        # least the "성함: <이름>" line, so it would be truthy for every patient and
+        # the no-fabrication branch below would be dead code. lead_topics is empty
+        # exactly for the unsurveyed / first-meeting patient, which is when we must
+        # ask open questions instead of inventing a specific memory.
+        has_memories = bool([t for t in (context.get("lead_topics") or []) if t])
 
         hint_guide = {
             0: "열린 질문만 하고 단서는 주지 마세요.",
@@ -140,8 +148,13 @@ class DialogueService:
             "수동적으로 기다리지 말고, 당신이 먼저 화제를 꺼내고 부드럽게 방향을 이끄세요. "
             "따뜻하고 편안한 해요체로 짧고 다정하게(한두 문장) 건네되, 매번 어르신이 이야기를 "
             "이어가도록 구체적이고 다정한 질문이나 권유로 마무리하세요. "
-            "공감과 맞장구를 자주 넣고(예: '아이고, 그러셨구나~', '와, 정말요?'), 성함이 있으면 "
-            "다정하게 불러 주세요. "
+            "진심 어린 공감과 맞장구를 건네세요. "
+            "다만 ⚠️매 턴 똑같은 인사·감탄사·말버릇을 반복하지 마세요. 특히 '아이고', "
+            "'안녕하세요', '그러셨구나' 같은 표현이나 어르신 호칭으로 매번 시작하지 말고, 바로 앞 "
+            "대화에서 이미 쓴 말머리와는 다르게 매번 새롭게 운을 떼세요. 인사는 대화 첫머리에 한 번이면 "
+            "충분합니다. "
+            "어르신 성함은 매 턴 부르지 말고 가끔 자연스러울 때만 부르세요. ⚠️성함을 모르면 절대 "
+            "이름을 지어내지 말고 호칭 없이 말하세요. "
             "정답을 강요하거나 시험하듯 묻지 말고, 어르신이 또렷이 기억하는 추억을 콕 집어 함께 "
             "떠올리도록 자연스럽게 이끌어 주세요. 한 번에 한 가지만 천천히 권하세요."
         )
@@ -153,7 +166,7 @@ class DialogueService:
             )
         elif stage <= 1:
             task = "따뜻하게 안부를 묻고 어르신을 편안하게 해 주세요."
-        else:
+        elif has_memories:
             task = (
                 "옛 기억을 함께 떠올리는 시간이고, 이 대화를 이끄는 사람은 당신입니다. "
                 "아래 '이번에 함께 떠올려볼 추억' 또는 '어르신에 대해 아는 것'에서 구체적인 추억 "
@@ -164,8 +177,24 @@ class DialogueService:
                 "항상 구체적인 질문이나 권유로 마무리해 대화가 끊기지 않게 하세요. "
                 f"(살며시 도와주는 정도: {hint_level}단계 — {hint_guide})"
             )
+        else:
+            # We do NOT yet know any real memory of this 어르신. Crucially, do not
+            # invent one — instead invite THEM to surface a memory with warm, open
+            # questions. (This is the unseeded-demo / first-meeting path.)
+            task = (
+                "아직 이 어르신의 구체적인 추억을 모릅니다. ⚠️그러니 특정한 장소·사물·사건·음식을 "
+                "절대 지어내지 마세요(예: '감나무', '골목길 친구들' 같은 걸 만들어내면 안 됩니다). "
+                "대신 어르신이 직접 추억을 꺼내도록 따뜻하고 열린 질문으로 다정하게 이끌어 주세요. "
+                "방금 하신 말씀에 먼저 공감한 뒤, '예전에 어떤 곳을 자주 가셨어요?', '가장 정든 곳은 "
+                "어디였어요?'처럼 어르신이 스스로 떠올려 말하게 권해 주세요. 한 번에 하나만 물으세요. "
+                f"(살며시 도와주는 정도: {hint_level}단계 — {hint_guide})"
+            )
 
-        name_hint = f"어르신 성함: {patient_name}." if patient_name else ""
+        name_hint = (
+            f"어르신 성함: {patient_name} (매 턴 부르지 말고 가끔만 자연스럽게)."
+            if patient_name
+            else "어르신 성함은 아직 모릅니다. 이름을 지어내지 말고 호칭 없이 말하세요."
+        )
         # Per-patient data (grows with the DB) + what the patient JUST said, so
         # the reply follows the actual conversation instead of a blind script.
         persona = (context.get("persona") or "").strip()
@@ -194,6 +223,11 @@ class DialogueService:
             "(예: 목록에 없는 '감나무'·'특정 음식' 같은 걸 만들어내지 말 것). 대신 그 기억에 대해 "
             "'어떠셨어요?', '그 이야기 들려주세요' 처럼 어르신이 직접 떠올려 말하도록 열린 질문으로 "
             "이끌어 주세요."
+        )
+        parts.append(
+            "⚠️중요: 위 대화 기록에서 당신(assistant)이 이미 한 인사·감탄사·말머리·호칭을 그대로 "
+            "반복하지 말고, 직전 답변과 확연히 다르게 새 문장으로 시작하세요. 같은 말버릇이 반복되면 "
+            "어르신이 같은 말을 되풀이한다고 느낍니다."
         )
         # Replay the recent conversation (both sides) as alternating messages so
         # the reply continues the thread like a chatbot. The current turn — with
