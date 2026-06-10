@@ -29,7 +29,8 @@ param(
   [string]$KeyName = "",                 # optional EC2 key pair name (enables SSH:22)
   [string]$Tag = "memory-rhythm",
   [switch]$NoEip,                        # skip re-attaching the tagged Elastic IP
-  [switch]$Https                         # front the app with Caddy + Let's Encrypt (nip.io); needs a tagged EIP
+  [switch]$Https,                        # front the app with Caddy + Let's Encrypt (nip.io); needs a tagged EIP
+  [switch]$Eleven                        # enable ElevenLabs TTS (reads ELEVENLABS_* from backend/.env)
 )
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot          # repo root (deploy/ is one below)
@@ -133,6 +134,26 @@ if ($Gemini) {
   Write-Host "  (Gemini LLM enabled; key injected via instance user-data)" -ForegroundColor Yellow
 }
 
+# -Eleven enables real ElevenLabs TTS (voice output). NOTE: a FREE ElevenLabs tier
+# cannot use the standard "library" voices via the API (HTTP 402), so this only
+# produces audio on a paid plan or with an owned/cloned voice (set ELEVENLABS_VOICE_ID).
+$elevenLine = ""
+if ($Eleven) {
+  $envFile = Join-Path $backend ".env"
+  if (-not (Test-Path $envFile)) { throw "-Eleven set but backend/.env not found (needs ELEVENLABS_API_KEY)." }
+  function _EnvVal($name) {
+    $line = (Select-String -Path $envFile -Pattern "^\s*$name\s*=" | Select-Object -First 1).Line
+    if (-not $line) { return "" }
+    return ($line -replace "^\s*$name\s*=\s*", '').Trim().Trim('"')
+  }
+  $elKey = _EnvVal 'ELEVENLABS_API_KEY'
+  if (-not $elKey) { throw "ELEVENLABS_API_KEY not found in backend/.env." }
+  $elevenLine = "Environment=TTS_PROVIDER=elevenlabs`nEnvironment=ELEVENLABS_API_KEY=$elKey"
+  $elVoice = _EnvVal 'ELEVENLABS_VOICE_ID'; if ($elVoice) { $elevenLine += "`nEnvironment=ELEVENLABS_VOICE_ID=$elVoice" }
+  $elModel = _EnvVal 'ELEVENLABS_MODEL'; if ($elModel) { $elevenLine += "`nEnvironment=ELEVENLABS_MODEL=$elModel" }
+  Write-Host "  (ElevenLabs TTS enabled; key injected via instance user-data)" -ForegroundColor Yellow
+}
+
 $userData = @'
 #!/bin/bash
 set -euxo pipefail
@@ -158,6 +179,7 @@ WorkingDirectory=/opt/app
 Environment=AI_PROVIDER=__AIPROVIDER__
 Environment=STORE=sqlite
 __GEMINILINE__
+__ELEVENLINE__
 ExecStart=/opt/app/venv/bin/uvicorn app.main:app __UVICORNBIND__
 Restart=always
 RestartSec=3
@@ -190,7 +212,7 @@ systemctl enable caddy
 systemctl restart caddy
 "@
 }
-$userData = $userData.Replace("__PRESIGNED__", $presigned).Replace("__AIPROVIDER__", $aiProvider).Replace("__GEMINILINE__", $geminiLine).Replace("__UVICORNBIND__", $uvicornBind).Replace("__CADDYBLOCK__", $caddyBlock)
+$userData = $userData.Replace("__PRESIGNED__", $presigned).Replace("__AIPROVIDER__", $aiProvider).Replace("__GEMINILINE__", $geminiLine).Replace("__ELEVENLINE__", $elevenLine).Replace("__UVICORNBIND__", $uvicornBind).Replace("__CADDYBLOCK__", $caddyBlock)
 $udFile = Join-Path $env:TEMP "memrhythm-userdata.sh"
 Set-Content -Path $udFile -Value $userData -Encoding ascii -NoNewline
 
