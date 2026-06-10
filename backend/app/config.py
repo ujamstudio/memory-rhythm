@@ -25,6 +25,9 @@ from app.providers.base import EMBEDDING_DIM
 
 # Valid provider backends for any capability.
 _VALID_PROVIDERS = ("mock", "openai", "google")
+# TTS additionally accepts "elevenlabs" (TTS-only — it implements no other
+# capability, so it is intentionally not in the shared set above).
+_VALID_TTS_PROVIDERS = _VALID_PROVIDERS + ("elevenlabs",)
 
 # Mock pseudo-vector dimension default (kept for back-compat with EMBEDDING_DIM).
 _DEFAULT_EMBED_DIM = EMBEDDING_DIM
@@ -67,15 +70,16 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def _provider(name: str, default: str) -> str:
+def _provider(name: str, default: str, valid: tuple = _VALID_PROVIDERS) -> str:
     """Read a per-capability provider env var, lowercased and validated.
 
-    Anything outside {mock, openai, google} (including unset) falls back to
-    ``default`` if that is valid, otherwise ``"mock"``.
+    Anything outside ``valid`` (including unset) falls back to ``default`` if
+    that is valid, otherwise ``"mock"``. ``valid`` defaults to {mock, openai,
+    google}; TTS passes the wider set that also allows ``elevenlabs``.
     """
     value = _env(name, default).lower()
-    if value not in _VALID_PROVIDERS:
-        return default if default in _VALID_PROVIDERS else "mock"
+    if value not in valid:
+        return default if default in valid else "mock"
     return value
 
 
@@ -95,6 +99,9 @@ class Settings:
     google_api_key: str | None = None       # GOOGLE_API_KEY or GEMINI_API_KEY (Gemini API)
     google_cloud_project: str | None = None  # GOOGLE_CLOUD_PROJECT (Cloud STT)
     google_app_credentials: str | None = None  # GOOGLE_APPLICATION_CREDENTIALS path
+    elevenlabs_api_key: str | None = None   # ELEVENLABS_API_KEY (TTS only)
+    elevenlabs_voice_id: str | None = None  # ELEVENLABS_VOICE_ID (default in provider)
+    elevenlabs_model: str | None = None     # ELEVENLABS_MODEL (default in provider)
     embed_dim: int = _DEFAULT_EMBED_DIM     # mock pseudo-vector dimension
     google_embed_dim: int = _DEFAULT_GOOGLE_EMBED_DIM  # gemini-embedding-001 dim
     cors_origin: str = "http://localhost:5173"
@@ -132,6 +139,9 @@ def get_settings() -> Settings:
       * ``GOOGLE_API_KEY`` / ``GEMINI_API_KEY`` -> ``google_api_key``
       * ``GOOGLE_CLOUD_PROJECT`` -> ``google_cloud_project``
       * ``GOOGLE_APPLICATION_CREDENTIALS`` -> ``google_app_credentials``
+      * ``ELEVENLABS_API_KEY`` -> ``elevenlabs_api_key`` (TTS only; default ``None``)
+      * ``ELEVENLABS_VOICE_ID``-> ``elevenlabs_voice_id`` (default in provider)
+      * ``ELEVENLABS_MODEL``   -> ``elevenlabs_model``  (default ``eleven_flash_v2_5``)
       * ``EMBED_DIM``          -> ``embed_dim``       (default ``256``)
       * ``GOOGLE_EMBED_DIM``   -> ``google_embed_dim``(default ``768``)
       * ``CORS_ORIGIN``        -> ``cors_origin``     (default localhost:5173)
@@ -145,7 +155,7 @@ def get_settings() -> Settings:
     # Per-capability providers default to the global provider, then validate.
     llm_provider = _provider("LLM_PROVIDER", ai_provider)
     stt_provider = _provider("STT_PROVIDER", ai_provider)
-    tts_provider = _provider("TTS_PROVIDER", ai_provider)
+    tts_provider = _provider("TTS_PROVIDER", ai_provider, _VALID_TTS_PROVIDERS)
     image_provider = _provider("IMAGE_PROVIDER", ai_provider)
     embedding_provider = _provider("EMBEDDING_PROVIDER", ai_provider)
 
@@ -172,6 +182,9 @@ def get_settings() -> Settings:
         google_api_key=google_api_key,
         google_cloud_project=_env_opt("GOOGLE_CLOUD_PROJECT"),
         google_app_credentials=_env_opt("GOOGLE_APPLICATION_CREDENTIALS"),
+        elevenlabs_api_key=_env_opt("ELEVENLABS_API_KEY"),
+        elevenlabs_voice_id=_env_opt("ELEVENLABS_VOICE_ID"),
+        elevenlabs_model=_env_opt("ELEVENLABS_MODEL"),
         embed_dim=_env_int("EMBED_DIM", _DEFAULT_EMBED_DIM),
         google_embed_dim=_env_int("GOOGLE_EMBED_DIM", _DEFAULT_GOOGLE_EMBED_DIM),
         cors_origin=_env("CORS_ORIGIN", "http://localhost:5173"),

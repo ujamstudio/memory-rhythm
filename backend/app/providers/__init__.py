@@ -21,7 +21,8 @@ Notes on Google capabilities:
     NOT the Gemini key) -> gated on ``GOOGLE_APPLICATION_CREDENTIALS`` or
     ``GOOGLE_CLOUD_PROJECT`` being present.
   * There is intentionally **no Google TTS**; selecting ``google`` for TTS falls
-    back to the silent mock.
+    back to the silent mock. For real voice, set ``TTS_PROVIDER=elevenlabs`` with
+    ``ELEVENLABS_API_KEY`` (ElevenLabs is TTS-only) -> mp3, same as OpenAI TTS.
 
 The shared abstract types / constants / the ``Providers`` dataclass are re-exported
 from :mod:`app.providers.base` for convenient ``from app.providers import ...``.
@@ -92,10 +93,23 @@ def get_providers(settings) -> Providers:
         stt = MockSTT()
 
     # ---- TTS (no Google TTS: google -> silent mock) ----------------------
+    elevenlabs_api_key = getattr(settings, "elevenlabs_api_key", None)
     if tts_provider == "openai" and openai_api_key:
         from app.providers.openai_provider import OpenAITTS
 
         tts: TTSProvider = OpenAITTS(openai_api_key)
+    elif tts_provider == "elevenlabs" and elevenlabs_api_key:
+        from app.providers.elevenlabs_provider import (
+            DEFAULT_MODEL,
+            DEFAULT_VOICE_ID,
+            ElevenLabsTTS,
+        )
+
+        tts = ElevenLabsTTS(
+            elevenlabs_api_key,
+            voice_id=getattr(settings, "elevenlabs_voice_id", None) or DEFAULT_VOICE_ID,
+            model=getattr(settings, "elevenlabs_model", None) or DEFAULT_MODEL,
+        )
     else:
         tts = MockTTS()
 
