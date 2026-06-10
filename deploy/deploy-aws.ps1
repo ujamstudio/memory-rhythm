@@ -27,16 +27,19 @@ param(
   [string]$InstanceType = "t3.micro",
   [switch]$Gemini,                       # inject GOOGLE_API_KEY from backend/.env
   [string]$KeyName = "",                 # optional EC2 key pair name (enables SSH:22)
-  [string]$Tag = "memory-rhythm"
+  [string]$Tag = "memory-rhythm",
+  [switch]$NoEip                         # skip re-attaching the tagged Elastic IP
 )
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot          # repo root (deploy/ is one below)
 $backend = Join-Path $repo "backend"
 
-function Aws { param([Parameter(ValueFromRemainingArguments)]$a) & aws @a; if ($LASTEXITCODE) { throw "aws $($a -join ' ') failed ($LASTEXITCODE)" } }
+# NOTE: must NOT be named "Aws" — PowerShell command resolution is case-insensitive,
+# so a function named Aws would shadow the external `aws` CLI and recurse infinitely.
+function AwsChecked { param([Parameter(ValueFromRemainingArguments)]$a) & aws.exe @a; if ($LASTEXITCODE) { throw "aws $($a -join ' ') failed ($LASTEXITCODE)" } }
 
 # --- preflight ------------------------------------------------------------
-& aws --version *> $null; if ($LASTEXITCODE) { throw "AWS CLI not installed. Install it, then run `aws configure`." }
+& aws --version 2>&1 | Out-Null; if ($LASTEXITCODE) { throw "AWS CLI not installed. Install it, then run `aws configure`." }
 if (-not $Region) { $Region = (& aws configure get region) }
 if (-not $Region) { throw "No region. Pass -Region or set one via `aws configure`." }
 $acct = (& aws sts get-caller-identity --query Account --output text)
@@ -51,7 +54,7 @@ if (-not (Test-Path (Join-Path $backend "static/index.html"))) {
 $bundle = Join-Path $env:TEMP "memrhythm-deploy.tar.gz"
 if (Test-Path $bundle) { Remove-Item $bundle -Force }
 Write-Host "Bundling backend/ (excluding .env, __pycache__)..." -ForegroundColor Cyan
-& tar -czf $bundle -C $backend --exclude=".env" --exclude="__pycache__" --exclude="*.pyc" app static requirements.txt
+& tar -czf $bundle -C $backend --exclude=".env" --exclude="__pycache__" --exclude="*.pyc" app static requirements.txt seed_demo.py
 if ($LASTEXITCODE) { throw "tar bundling failed." }
 $sizeMB = [math]::Round((Get-Item $bundle).Length / 1MB, 2)
 Write-Host "  bundle: $bundle ($sizeMB MB)" -ForegroundColor DarkGray
@@ -60,13 +63,16 @@ Write-Host "  bundle: $bundle ($sizeMB MB)" -ForegroundColor DarkGray
 # Bucket name must be globally unique + lowercase. (account+region keep it stable-ish.)
 $bucket = "memrhythm-deploy-$acct-$Region".ToLower()
 $key = "deploy.tar.gz"
-& aws s3api head-bucket --bucket $bucket 2>$null
-$exists = ($LASTEXITCODE -eq 0)
+# head-bucket fails (and writes stderr) when the bucket is absent; under
+# $ErrorActionPreference=Stop that native stderr is a terminating error in
+# Windows PowerShell 5.1, so catch it and treat any failure as "absent".
+$exists = $false
+try { & aws.exe s3api head-bucket --bucket $bucket 2>&1 | Out-Null; $exists = ($LASTEXITCODE -eq 0) } catch { $exists = $false }
 if (-not $exists) {
-  if ($Region -eq "us-east-1") { Aws s3api create-bucket --bucket $bucket }
-  else { Aws s3api create-bucket --bucket $bucket --region $Region --create-bucket-configuration "LocationConstraint=$Region" }
+  if ($Region -eq "us-east-1") { AwsChecked s3api create-bucket --bucket $bucket }
+  else { AwsChecked s3api create-bucket --bucket $bucket --region $Region --create-bucket-configuration "LocationConstraint=$Region" }
 }
-Aws s3 cp $bundle "s3://$bucket/$key" --region $Region
+AwsChecked s3 cp $bundle "s3://$bucket/$key" --region $Region
 $presigned = (& aws s3 presign "s3://$bucket/$key" --region $Region --expires-in 3600)
 Write-Host "Uploaded + presigned (1h)." -ForegroundColor Green
 
@@ -74,11 +80,11 @@ Write-Host "Uploaded + presigned (1h)." -ForegroundColor Green
 $vpc = (& aws ec2 describe-vpcs --region $Region --filters "Name=is-default,Values=true" --query "Vpcs[0].VpcId" --output text)
 if (-not $vpc -or $vpc -eq "None") { throw "No default VPC in $Region. Create one (aws ec2 create-default-vpc) or use a custom subnet." }
 $sgName = "$Tag-sg"
-$sg = (& aws ec2 describe-security-groups --region $Region --filters "Name=group-name,Values=$sgName" "Name=vpc-id,Values=$vpc" --query "SecurityGroups[0].GroupId" --output text 2>$null)
-if (-not $sg -or $sg -eq "None") {
+try { $sg = (& aws.exe ec2 describe-security-groups --region $Region --filters "Name=group-name,Values=$sgName" "Name=vpc-id,Values=$vpc" --query "SecurityGroups[0].GroupId" --output text 2>&1 | Select-Object -Last 1) } catch { $sg = "" }
+if (-not $sg -or $sg -notmatch '^sg-') {
   $sg = (& aws ec2 create-security-group --region $Region --group-name $sgName --description "Memory Rhythm demo" --vpc-id $vpc --query GroupId --output text)
-  Aws ec2 authorize-security-group-ingress --region $Region --group-id $sg --protocol tcp --port 80 --cidr 0.0.0.0/0
-  if ($KeyName) { Aws ec2 authorize-security-group-ingress --region $Region --group-id $sg --protocol tcp --port 22 --cidr 0.0.0.0/0 }
+  AwsChecked ec2 authorize-security-group-ingress --region $Region --group-id $sg --protocol tcp --port 80 --cidr 0.0.0.0/0
+  if ($KeyName) { AwsChecked ec2 authorize-security-group-ingress --region $Region --group-id $sg --protocol tcp --port 22 --cidr 0.0.0.0/0 }
 }
 Write-Host "Security group: $sg (vpc $vpc)" -ForegroundColor Green
 
@@ -88,7 +94,12 @@ if (-not $ami -or $ami -eq "None") { throw "Could not resolve Ubuntu 24.04 AMI i
 Write-Host "AMI: $ami (Ubuntu 24.04)" -ForegroundColor Green
 
 # --- 5) user-data bootstrap ----------------------------------------------
-$aiProvider = if ($Gemini) { "google" } else { "mock" }
+# -Gemini drives ONLY the conversation LLM (두뇌+입) with real Gemini, keeping
+# AI_PROVIDER=mock so STT/TTS/image/embedding stay offline-mock. This is the
+# robust demo posture: the visible dialogue is real, but no Imagen access is
+# required and no extra free-tier quota is spent on embeddings (memory: the
+# free Gemini tier 429s after ~20 calls/day, then silently falls back to mock).
+$aiProvider = "mock"
 $geminiLine = ""
 if ($Gemini) {
   $envFile = Join-Path $backend ".env"
@@ -96,8 +107,9 @@ if ($Gemini) {
   $keyLine = (Select-String -Path $envFile -Pattern '^\s*GOOGLE_API_KEY\s*=' | Select-Object -First 1).Line
   if (-not $keyLine) { throw "GOOGLE_API_KEY not found in backend/.env." }
   $apiKey = ($keyLine -replace '^\s*GOOGLE_API_KEY\s*=\s*', '').Trim().Trim('"')
-  $geminiLine = "Environment=GOOGLE_API_KEY=$apiKey"
-  Write-Host "  (Gemini key will be injected via instance user-data)" -ForegroundColor Yellow
+  # Two systemd Environment lines: select Gemini for the LLM + inject the key.
+  $geminiLine = "Environment=LLM_PROVIDER=google`nEnvironment=GOOGLE_API_KEY=$apiKey"
+  Write-Host "  (Gemini LLM enabled; key injected via instance user-data)" -ForegroundColor Yellow
 }
 
 $userData = @'
@@ -112,6 +124,10 @@ tar -xzf /tmp/app.tar.gz -C /opt/app
 python3 -m venv /opt/app/venv
 /opt/app/venv/bin/pip install --upgrade pip
 /opt/app/venv/bin/pip install -r /opt/app/requirements.txt
+# Seed the three demo personas (박순례/김철수/이영자) into SQLite so the AI leads
+# recall with their REAL memories instead of inventing some. Offline (mock
+# embeddings/images) — no API calls. Idempotent; never block boot on failure.
+( cd /opt/app && STORE=sqlite /opt/app/venv/bin/python seed_demo.py ) || true
 cat >/etc/systemd/system/memrhythm.service <<UNIT
 [Unit]
 Description=Memory Rhythm
@@ -119,7 +135,7 @@ After=network.target
 [Service]
 WorkingDirectory=/opt/app
 Environment=AI_PROVIDER=__AIPROVIDER__
-Environment=STORE=memory
+Environment=STORE=sqlite
 __GEMINILINE__
 ExecStart=/opt/app/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 80
 Restart=always
@@ -145,7 +161,22 @@ $instId = (& aws ec2 run-instances --region $Region `
 if ($LASTEXITCODE) { throw "run-instances failed." }
 Write-Host "Launched instance: $instId" -ForegroundColor Green
 Write-Host "Waiting for it to enter 'running'..." -ForegroundColor Cyan
-Aws ec2 wait instance-running --region $Region --instance-ids $instId
+AwsChecked ec2 wait instance-running --region $Region --instance-ids $instId
+
+# --- 6b) re-attach the app's Elastic IP (if one exists) -------------------
+# Keeps the public IP / URL stable across redeploys so a CloudFront origin or
+# an nip.io hostname never has to be updated by hand. We look the EIP up by the
+# same "$Tag" Name tag; associating it here auto-moves it off the old instance.
+# Pass -NoEip to skip. If no tagged EIP exists, this is a no-op.
+if (-not $NoEip) {
+  $eipAlloc = (& aws ec2 describe-addresses --region $Region --filters "Name=tag:Name,Values=$Tag" --query "Addresses[0].AllocationId" --output text 2>&1 | Select-Object -Last 1)
+  if ($eipAlloc -and $eipAlloc -match '^eipalloc-') {
+    & aws ec2 associate-address --region $Region --instance-id $instId --allocation-id $eipAlloc --allow-reassociation *> $null
+    if ($LASTEXITCODE) { Write-Host "  (warning: EIP $eipAlloc re-association failed; using the auto-assigned IP)" -ForegroundColor Yellow }
+    else { Write-Host "Re-attached Elastic IP ($eipAlloc) -> $instId" -ForegroundColor Green }
+  }
+}
+
 $dns = (& aws ec2 describe-instances --region $Region --instance-ids $instId --query "Reservations[0].Instances[0].PublicDnsName" --output text)
 $ip = (& aws ec2 describe-instances --region $Region --instance-ids $instId --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
 
@@ -155,7 +186,8 @@ Write-Host " Memory Rhythm is deploying. Bootstrap (apt + pip) takes ~2-4 min." 
 Write-Host ""
 Write-Host "   URL:        http://$dns/" -ForegroundColor White
 Write-Host "   IP:         http://$ip/" -ForegroundColor White
-Write-Host "   AI mode:    $aiProvider" -ForegroundColor White
+$aiMode = if ($Gemini) { "Gemini LLM (두뇌+입); STT/TTS/image/embedding=mock" } else { "mock" }
+Write-Host "   AI mode:    $aiMode" -ForegroundColor White
 Write-Host "   Instance:   $instId  ($InstanceType, $Region)" -ForegroundColor White
 if ($KeyName) { Write-Host "   SSH:        ssh ubuntu@$dns  (logs: journalctl -u memrhythm -f)" -ForegroundColor DarkGray }
 Write-Host ""

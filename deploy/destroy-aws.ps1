@@ -30,6 +30,16 @@ if ($ids -and $ids -ne "None") {
   Write-Host "No running instances tagged '$Tag'." -ForegroundColor DarkGray
 }
 
+# 1b) release the tagged Elastic IP (an allocated-but-unassociated EIP is billed)
+$eipAlloc = (& aws ec2 describe-addresses --region $Region --filters "Name=tag:Name,Values=$Tag" --query "Addresses[0].AllocationId" --output text 2>$null)
+if ($eipAlloc -and $eipAlloc -match '^eipalloc-') {
+  & aws ec2 release-address --region $Region --allocation-id $eipAlloc 2>$null
+  if ($LASTEXITCODE -eq 0) { Write-Host "Released Elastic IP $eipAlloc." -ForegroundColor Green }
+  else { Write-Host "Could not release EIP $eipAlloc (release manually if needed)." -ForegroundColor Yellow }
+} else {
+  Write-Host "No tagged Elastic IP to release." -ForegroundColor DarkGray
+}
+
 # 2) delete security group (retry: ENI detach lags briefly after termination)
 $sg = (& aws ec2 describe-security-groups --region $Region --filters "Name=group-name,Values=$Tag-sg" --query "SecurityGroups[0].GroupId" --output text 2>$null)
 if ($sg -and $sg -ne "None") {
