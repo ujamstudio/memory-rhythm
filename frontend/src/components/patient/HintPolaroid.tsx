@@ -51,13 +51,20 @@ export function HintPolaroid({
   const opacity = HINT_OPACITY[Math.min(hintLevel, 4)];
   return (
     <motion.div
-      initial={{ opacity: 0, y: -16, scale: 0.94 }}
+      className="hint-polaroid"
+      initial={{ opacity: 0, y: -8, scale: 0.96 }}
       animate={{ opacity, y: 0, scale: 1 }}
-      transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+      transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
       style={{
         display: "flex",
         justifyContent: "center",
-        padding: "6px 0 2px",
+        // The clue image + caption are already viewport-HEIGHT capped below
+        // (min(..,14vh)/min(..,7.5vh)), so the Polaroid's intrinsic height is
+        // bounded and it pushes the chat down without overlapping it. (A prior
+        // maxHeight+overflow:visible clamp painted the card OVER the chat on
+        // short screens; on very short viewports the whole Polaroid is hidden
+        // via the .hint-polaroid media query instead.)
+        padding: "4px 0 2px",
         flexShrink: 0,
       }}
     >
@@ -66,36 +73,39 @@ export function HintPolaroid({
           transform: "rotate(-1.8deg)",
           borderRadius: "6px",
           background: "white",
-          padding: "10px 10px 6px",
-          boxShadow: "0 10px 24px rgba(58,44,32,0.22)",
+          padding: "clamp(5px, 1.4vw, 9px) clamp(7px, 1.8vw, 10px) clamp(4px, 1vw, 6px)",
+          boxShadow: "0 8px 20px rgba(58,44,32,0.22)",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           position: "relative",
+          maxWidth: "min(82vw, 240px)",
         }}
       >
         <div
           style={{
             position: "absolute",
-            top: "-10px",
+            top: "-8px",
             left: "50%",
             transform: "translateX(-50%) rotate(2deg)",
-            width: "60px",
-            height: "20px",
+            width: "clamp(44px, 11vw, 60px)",
+            height: "clamp(14px, 3.4vw, 20px)",
             borderRadius: "2px",
             background: "rgba(201,162,75,0.45)",
           }}
         />
         <div
           style={{
-            width: "clamp(80px, 18vw, 110px)",
-            height: "clamp(80px, 18vw, 110px)",
+            // Square clue image, but also capped by viewport HEIGHT (vmin/vh)
+            // so it shrinks on short screens instead of pushing the chat away.
+            width: "min(clamp(60px, 14vw, 96px), 14vh)",
+            height: "min(clamp(60px, 14vw, 96px), 14vh)",
             background: "linear-gradient(135deg, #efe5d2, #e8d8c0)",
             borderRadius: "4px",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: "clamp(36px, 9vw, 52px)",
+            fontSize: "min(clamp(30px, 7.5vw, 48px), 7.5vh)",
             filter: hintLevel < 3 ? `blur(${(3 - hintLevel) * 4}px)` : "none",
             transition: "filter 0.8s ease",
           }}
@@ -104,9 +114,10 @@ export function HintPolaroid({
         </div>
         <div
           style={{
-            marginTop: "5px",
+            marginTop: "3px",
             fontFamily: '"Nanum Pen Script", cursive',
-            fontSize: "clamp(16px, 4vw, 22px)",
+            fontSize: "clamp(15px, 3.4vw, 20px)",
+            lineHeight: 1.1,
             color: "#33291F",
             whiteSpace: "nowrap",
           }}
@@ -116,9 +127,9 @@ export function HintPolaroid({
         {hintLevel >= 4 && (
           <div
             style={{
-              marginTop: "3px",
+              marginTop: "2px",
               fontFamily: '"Gothic A1", sans-serif',
-              fontSize: "clamp(10px, 2.5vw, 13px)",
+              fontSize: "clamp(10px, 2.4vw, 13px)",
               fontWeight: 700,
               color: "#9A6A3E",
               textAlign: "center",

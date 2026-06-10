@@ -141,24 +141,35 @@
     radial-gradient(circle at 50% 54%, rgba(255,255,255,0.55), transparent 72%);
 }
 
-/* 40Hz gamma flicker ring — period = 25ms, very low amplitude */
-@keyframes gamma40 {
-  0%, 49%   { opacity: 0.18; }
-  50%, 100% { opacity: 0.42; }
-}
+/* 40Hz gamma flicker ring. Opacity is driven per-frame by useGammaTone off the
+   AudioContext clock (phase-locked to the 40Hz tone), NOT a CSS keyframe — a
+   keyframe free-runs on its own clock and browsers can't render a clean 25ms
+   flicker, so it would drift out of sync with the audio. */
 .gamma-ring {
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 60;
+  /* Static decorative glow by default (home/landing render this class with no JS
+     driver). On the patient screen useGammaTone overwrites opacity per frame
+     while the 40Hz stimulation is active, so the flicker still shows there. */
+  opacity: 0.28;
   box-shadow:
     inset 0 0 0 6px rgba(198,117,55,0.55),
     inset 0 0 44px 8px rgba(214,150,90,0.30);
-  animation: gamma40 0.025s steps(1, end) infinite;
   border-radius: 28px;
 }
-@media (prefers-reduced-motion: reduce) {
-  .gamma-ring { animation: none; opacity: 0.28; }
+
+/* Short viewports (landscape phones, split-screen, small windows): the optional
+   top Polaroid clue + the oversized mic button would push the header and chat
+   off-screen. Drop the Polaroid and shrink the mic to keep the conversation
+   usable. (Addresses the landscape layout breakage.) */
+@media (max-height: 480px) {
+  .hint-polaroid { display: none !important; }
+  .patient-mic {
+    width: clamp(72px, 16vw, 96px) !important;
+    height: clamp(72px, 16vw, 96px) !important;
+  }
 }
 
 /* Visually-hidden but screen-reader-available (accessible labels). */

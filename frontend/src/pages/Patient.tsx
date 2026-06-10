@@ -27,6 +27,7 @@ import type {
   ServerMessage,
 } from "../protocol";
 import { stageLabel } from "../protocol";
+import { SCENARIOS } from "../lib/scenarios";
 import { WSClient } from "../lib/ws";
 import { useClock } from "../lib/useClock";
 import { ReasoningPanel } from "../components/ReasoningPanel";
@@ -96,8 +97,18 @@ export default function Patient() {
   // Slide-in drawer: 추론(reasoning) / 앨범(autobiography), hidden by default.
   const [panel, setPanel] = useState<SidePanel>("none");
 
+  // 시뮬레이션 시나리오: auto-play a scripted patient through the real WS loop.
+  const [simRunning, setSimRunning] = useState(false);
+  const [simScenarioId, setSimScenarioId] = useState<string | null>(null);
+  const [simMenuOpen, setSimMenuOpen] = useState(false);
+  const simRef = useRef<{ idx: number; turns: string[] }>({ idx: 0, turns: [] });
+
   const wsRef = useRef<WSClient | null>(null);
   const startedRef = useRef(false);
+  // The live session id + bound patient are refs so the simulation can swap in a
+  // fresh session (clean Stage-1 replay) without re-running the connect effect.
+  const sessionIdRef = useRef(DEMO_SESSION_ID);
+  const activePatientRef = useRef(patientId);
   const inputRef = useRef<HTMLInputElement | null>(null);
   // Browser SpeechRecognition instance (Web Speech API) for voice answers.
   const recognitionRef = useRef<any>(null);
@@ -164,8 +175,9 @@ export default function Patient() {
       // "시작하기" on the landing screen).
       if (s === "open") {
         // (Re)bind the session on connect AND on every auto-reconnect, so the
-        // session keeps working after a backend restart / network drop.
-        client.startSession(patientId);
+        // session keeps working after a backend restart / network drop. Reads a
+        // ref so a simulation can target its own persona.
+        client.startSession(activePatientRef.current);
         if (!startedRef.current) {
           startedRef.current = true;
           // The backend does NOT greet on start_session (it only replies to a
@@ -191,7 +203,7 @@ export default function Patient() {
         }
       }
     });
-    client.connect(DEMO_SESSION_ID);
+    client.connect(sessionIdRef.current);
     return () => {
       offMsg();
       offState();
@@ -277,15 +289,88 @@ export default function Patient() {
     sendText("잘 모르겠어요. 힌트를 좀 더 주세요.");
   }, [sendText]);
 
+  // ---- 시뮬레이션 시나리오 ------------------------------------------------
+  // Start a scripted scenario: reset the screen, open a FRESH backend session
+  // (so the stage machine replays from Stage 1 — reproducible re-runs), and let
+  // the runner effect below feed each scripted turn after the AI replies.
+  const startSimulation = useCallback(
+    (scenarioId: string) => {
+      const scenario = SCENARIOS.find((s) => s.id === scenarioId);
+      const client = wsRef.current;
+      if (!scenario || !client) return;
+      simRef.current = { idx: 0, turns: scenario.turns.map((t) => t.text) };
+      setSimMenuOpen(false);
+      setSimScenarioId(scenario.id);
+      setSimRunning(true);
+      // Clean slate for a reproducible run.
+      setMessages([{ role: "system", text: `▶ 시뮬레이션 — ${scenario.label}` }]);
+      setPages([]);
+      setReasoningLog([]);
+      setStage(1);
+      setHintLevel(0);
+      setAwaiting(false);
+      setInput("");
+      startedRef.current = false;
+      activePatientRef.current = scenario.patientId;
+      sessionIdRef.current = `sim-${scenario.id}-${Date.now()}`;
+      client.connect(sessionIdRef.current);
+    },
+    [],
+  );
+
+  const stopSimulation = useCallback(() => {
+    simRef.current = { idx: 0, turns: [] };
+    setSimRunning(false);
+    setSimScenarioId(null);
+  }, []);
+
+  // Runner: while a scenario is running, send the next scripted turn ~2.2s after
+  // the AI has finished replying (awaiting=false) and the opening greeting has
+  // shown. Gating on messages.length re-fires this when the greeting / each reply
+  // arrives. Cleared on every dependency change so only one timer is ever queued.
+  useEffect(() => {
+    if (!simRunning) return;
+    if (!connected || awaiting || listening) return;
+    if (!startedRef.current) return; // wait for the opening greeting
+    const sim = simRef.current;
+    if (sim.idx >= sim.turns.length) {
+      setSimRunning(false); // finished — leave the transcript on screen
+      return;
+    }
+    const t = setTimeout(() => {
+      const line = sim.turns[sim.idx];
+      sim.idx += 1;
+      sendText(line);
+    }, 2200);
+    return () => clearTimeout(t);
+  }, [simRunning, connected, awaiting, listening, sendText, messages.length]);
+
   // Voice answer via the Web Speech API (Korean). Clicking the mic starts
   // listening; the recognized text is sent automatically. Falls back to the
   // text input when the browser has no SpeechRecognition (e.g. Firefox).
+  // One-time helper: tell the patient to type instead, and focus the input.
+  const fallbackToTyping = useCallback((reason: string) => {
+    setListening(false);
+    setMessages((m) =>
+      m.some((x) => x.text === reason)
+        ? m
+        : [...m, { role: "system", text: reason }],
+    );
+    inputRef.current?.focus();
+  }, []);
+
   const startListening = useCallback(() => {
     const SR =
       (window as any).SpeechRecognition ||
       (window as any).webkitSpeechRecognition;
+    // The Web Speech API only runs in a secure context (https:// or localhost).
+    // On the plain-http demo it throws/!allowed, so guide the patient to type.
+    if (!window.isSecureContext) {
+      fallbackToTyping("🎤 음성 입력은 보안 연결(https)에서만 돼요. 아래에 글로 말씀을 적어 주세요.");
+      return;
+    }
     if (!SR) {
-      inputRef.current?.focus();
+      fallbackToTyping("🎤 이 브라우저는 음성 입력을 지원하지 않아요. 아래에 글로 적어 주세요.");
       return;
     }
     try {
@@ -297,16 +382,22 @@ export default function Patient() {
         const transcript = e?.results?.[0]?.[0]?.transcript ?? "";
         if (transcript.trim()) sendText(transcript);
       };
-      rec.onerror = () => setListening(false);
+      rec.onerror = (e: any) => {
+        // not-allowed / service-not-allowed (mic blocked or insecure origin).
+        if (e?.error === "not-allowed" || e?.error === "service-not-allowed") {
+          fallbackToTyping("🎤 마이크 사용이 막혀 있어요. 권한을 허용하거나, 아래에 글로 적어 주세요.");
+        } else {
+          setListening(false);
+        }
+      };
       rec.onend = () => setListening(false);
       recognitionRef.current = rec;
       setListening(true);
       rec.start();
     } catch {
-      setListening(false);
-      inputRef.current?.focus();
+      fallbackToTyping("🎤 음성 입력을 시작할 수 없어요. 아래에 글로 적어 주세요.");
     }
-  }, [sendText]);
+  }, [sendText, fallbackToTyping]);
 
   const stopListening = useCallback(() => {
     try {
@@ -320,7 +411,7 @@ export default function Patient() {
   // The big mic button: stop if listening, send typed text if present,
   // otherwise start voice capture.
   const onMic = useCallback(() => {
-    if (awaiting) return;
+    if (awaiting || simRunning) return;
     if (listening) {
       stopListening();
       return;
@@ -330,7 +421,7 @@ export default function Patient() {
       return;
     }
     startListening();
-  }, [awaiting, listening, input, sendText, startListening, stopListening]);
+  }, [awaiting, simRunning, listening, input, sendText, startListening, stopListening]);
 
   // ---- 감각 자극 stimulation (consent-gated) ----------------------------
 
@@ -376,15 +467,20 @@ export default function Patient() {
     return undefined;
   }, [reasoningLog]);
 
-  const micLabel = awaiting
-    ? "기다리는 중"
-    : listening
-      ? "듣는 중"
-      : input.trim()
-        ? "보내기"
-        : "대답하기";
+  const micLabel = simRunning
+    ? "시뮬레이션 중"
+    : awaiting
+      ? "기다리는 중"
+      : listening
+        ? "듣는 중"
+        : input.trim()
+          ? "보내기"
+          : "대답하기";
   const micActive = awaiting || listening;
   const maxHint = hintLevel >= 4;
+  // While a scenario auto-plays, lock the manual controls so a presenter can't
+  // race the runner; the 시뮬레이션 중지 button stays available in the header.
+  const controlsLocked = simRunning;
 
   // ---- Render -----------------------------------------------------------
 
@@ -404,7 +500,14 @@ export default function Patient() {
         overflow: "hidden",
       }}
     >
-      {stimOn && <div className="gamma-ring" />}
+      {stimOn && (
+        <div
+          className="gamma-ring"
+          ref={(el) => {
+            gamma.ringRef.current = el;
+          }}
+        />
+      )}
 
       {/* Hero: warm paper conversation card */}
       <div
@@ -479,6 +582,79 @@ export default function Patient() {
               fontWeight: 800,
             }}
           >
+            {/* 시뮬레이션 시나리오 — auto-play a scripted session over the real WS */}
+            <div style={{ position: "relative" }}>
+              {simRunning ? (
+                <button
+                  type="button"
+                  onClick={stopSimulation}
+                  className="phys-btn"
+                  aria-label="시뮬레이션 중지"
+                  style={chipStyle(true)}
+                >
+                  ⏹ 시뮬레이션 중지
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setSimMenuOpen((o) => !o)}
+                  aria-expanded={simMenuOpen}
+                  aria-haspopup="menu"
+                  aria-label="시뮬레이션 시나리오 선택"
+                  className="phys-btn"
+                  style={chipStyle(simMenuOpen)}
+                >
+                  ▶ 시뮬레이션
+                </button>
+              )}
+              {simMenuOpen && !simRunning && (
+                <div
+                  role="menu"
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 8px)",
+                    right: 0,
+                    zIndex: 60,
+                    width: "min(86vw, 300px)",
+                    background: "#FCF8F1",
+                    borderRadius: "14px",
+                    border: "1.5px solid rgba(198,117,55,0.28)",
+                    boxShadow: "0 12px 32px rgba(60,40,20,0.28)",
+                    padding: "8px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "6px",
+                  }}
+                >
+                  {SCENARIOS.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => startSimulation(s.id)}
+                      className="phys-btn"
+                      style={{
+                        textAlign: "left",
+                        background: "rgba(255,255,255,0.7)",
+                        border: "1px solid rgba(198,117,55,0.22)",
+                        borderRadius: "10px",
+                        padding: "9px 12px",
+                        cursor: "pointer",
+                        fontFamily: '"Gothic A1", sans-serif',
+                      }}
+                    >
+                      <div style={{ fontWeight: 800, fontSize: "14px", color: "#6E4A2A" }}>
+                        {s.label}
+                      </div>
+                      <div style={{ fontWeight: 600, fontSize: "11.5px", color: "#9A8A74", marginTop: "2px" }}>
+                        {s.summary}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* 추론 / 앨범 toggles — open a slide-in drawer, keep chat clean */}
             <button
               type="button"
@@ -625,7 +801,8 @@ export default function Patient() {
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="여기에 말을 입력하세요…"
+            disabled={controlsLocked}
+            placeholder={controlsLocked ? "시뮬레이션 진행 중…" : "여기에 말을 입력하세요…"}
             style={{
               flex: 1,
               borderRadius: "14px",
@@ -642,7 +819,7 @@ export default function Patient() {
               (Enter/mic are not obvious to 어르신). Disabled when empty/awaiting. */}
           <button
             type="submit"
-            disabled={awaiting || !input.trim()}
+            disabled={awaiting || controlsLocked || !input.trim()}
             className="phys-btn"
             aria-label="대답 보내기"
             style={{
@@ -683,7 +860,7 @@ export default function Patient() {
           <button
             type="button"
             onClick={askForHint}
-            disabled={maxHint || awaiting}
+            disabled={maxHint || awaiting || controlsLocked}
             className="phys-btn"
             aria-label={maxHint ? "힌트를 모두 봤어요" : "힌트 보기"}
             style={{
@@ -727,10 +904,10 @@ export default function Patient() {
           <button
             type="button"
             onClick={onMic}
-            disabled={awaiting}
+            disabled={awaiting || controlsLocked}
             aria-label={`음성으로 대답: ${micLabel}`}
             aria-pressed={micActive}
-            className={micActive ? "mic-pulse" : "phys-btn"}
+            className={`patient-mic ${micActive ? "mic-pulse" : "phys-btn"}`}
             style={{
               width: "clamp(120px, 30vw, 156px)",
               height: "clamp(120px, 30vw, 156px)",
