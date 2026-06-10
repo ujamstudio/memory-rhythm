@@ -77,6 +77,19 @@ class DialogueService:
         # Resolved by the caller from the selected LLM backend (gpt-4o-mini /
         # gemini-2.5-flash / mock-dialogue). The mock path ignores it.
         self._model = dialogue_model
+        # Recently spoken mock lines (this connection), so the templated path
+        # doesn't repeat the same sentence on consecutive turns. The service is
+        # built per WebSocket connection, so this is naturally per-session.
+        self._recent: list[str] = []
+
+    def _choose(self, pool: tuple[str, ...]) -> str:
+        """Pick a templated line, avoiding the last couple we already used."""
+        fresh = [ln for ln in pool if ln not in self._recent[-2:]]
+        line = random.choice(fresh or list(pool))
+        self._recent.append(line)
+        if len(self._recent) > 4:
+            self._recent = self._recent[-4:]
+        return line
 
     async def say(self, decision: dict, context: dict | None = None) -> str:
         """Return a Korean utterance for the given decision.
@@ -96,21 +109,17 @@ class DialogueService:
         next_stage = int(decision.get("next_stage", decision.get("stage", 1)))
         hint_level = max(0, min(int(decision.get("hint_level", 0)), 4))
         recall = bool(decision.get("recall_detected", False))
-        keyword = context.get("keyword") or self._first_keyword(decision)
 
         if recall or next_stage == 3:
-            line = random.choice(_STAGE3_LINES)
-            return line
+            return self._choose(_STAGE3_LINES)
 
         if next_stage <= 1:
-            return random.choice(_STAGE1_LINES)
+            return self._choose(_STAGE1_LINES)
 
-        # Stage 2 — pick by hint level.
-        line = random.choice(_STAGE2_LINES[hint_level])
-        # If the patient surfaced a non-target keyword, gently acknowledge it.
-        if keyword and hint_level < 4 and keyword not in ("시장", ""):
-            return f"'{keyword}' 말씀이시군요. {line}"
-        return line
+        # Stage 2 — pick by hint level. We intentionally do NOT echo the patient's
+        # word back ("'…' 말씀이시군요"): the extracted keyword is often a filler or
+        # greeting ('안녕하세요'/'글쎄요'), so parroting it reads as a broken bot.
+        return self._choose(_STAGE2_LINES[hint_level])
 
     @staticmethod
     def _first_keyword(decision: dict) -> str:

@@ -324,8 +324,13 @@ class MockImage(ImageProvider):
             label = m.group(0) if m else "추억"
         c1, c2, c3 = _SVG_THEMES.get(label, _SVG_DEFAULT)
 
-        # Short Korean caption derived deterministically from the prompt.
-        caption = prompt if len(prompt) <= 18 else prompt[:18] + "…"
+        # Korean-only caption. The image PROMPT is English ("Warm nostalgic
+        # Korean watercolor…"), so slicing it raw would bake English ad-copy onto
+        # the picture. Use the longest Korean run in the prompt (the recalled
+        # memory/keyword) instead, falling back to the theme label.
+        kor = re.findall(r"[가-힣][가-힣0-9 ]*", prompt)
+        cap_src = max(kor, key=len).strip() if kor else label
+        caption = cap_src if len(cap_src) <= 18 else cap_src[:18] + "…"
 
         svg = (
             '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="420" '

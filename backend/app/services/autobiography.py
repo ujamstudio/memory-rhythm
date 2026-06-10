@@ -15,22 +15,33 @@ from app.schemas import AutobiographyPage
 from app.store import Store
 
 # Templated narrative fragments keyed by a recalled keyword, for the mock path.
+# IMPORTANT: these describe the patient's MEMORY OF a place — never assume it was
+# their job/occupation (the recalled keyword is just what they remember, not what
+# they did for a living; a fisherman or teacher may also recall a market).
 _NARRATIVE_TEMPLATES: dict[str, str] = {
     "시장": (
-        "이른 아침, 동네 시장 골목은 늘 활기로 가득했습니다. 좌판 위에 가지런히 "
-        "쌓인 채소와 단골손님들의 정겨운 흥정 소리 속에서, 그분의 하루가 시작되곤 했지요."
+        "손을 잡고 드나들던 시장 골목이 떠오릅니다. 흥정 소리와 고소한 냄새, 사람들의 "
+        "정겨운 온기가 가득하던 그 풍경이 오래도록 마음에 남아 있습니다."
     ),
     "장터": (
-        "닷새마다 열리던 장터는 온 마을 사람들이 모이는 자리였습니다. 그 북적임 속에서 "
-        "나눈 인사와 웃음이 오래도록 마음에 남아 있습니다."
+        "닷새마다 열리던 장터에는 온 마을 사람들이 모여들었습니다. 그곳에서 나눈 인사와 "
+        "웃음소리가 따뜻한 기억으로 떠오릅니다."
     ),
     "학교": (
-        "운동장의 흙냄새와 친구들의 웃음소리가 가득하던 학창 시절. 그 교실에서의 작은 "
+        "흙냄새 나는 운동장과 친구들의 웃음소리로 가득하던 학창 시절. 그 교실에서의 작은 "
         "순간들이 한 장의 그림처럼 떠오릅니다."
     ),
     "고향": (
-        "굽이진 길을 따라 들어선 고향 마을. 익숙한 풍경과 사람들의 온기가 지금도 "
+        "굽이진 길을 따라 들어선 고향 마을, 익숙한 풍경과 사람들의 온기가 지금도 "
         "선명하게 마음을 데웁니다."
+    ),
+    "바다": (
+        "짭조름한 바닷바람과 부서지던 물결, 너른 바다 앞에서 보낸 시간이 마음 깊이 "
+        "남아 있습니다."
+    ),
+    "고등어": (
+        "비릿하면서도 정겨운 갯내음과 활기찬 사람들. 파닥이던 고등어가 가득하던 그 바닷가의 "
+        "하루가 생생하게 떠오릅니다."
     ),
 }
 
@@ -38,6 +49,14 @@ _DEFAULT_NARRATIVE = (
     "오늘 들려주신 이야기 속에는 따뜻한 시간이 담겨 있었습니다. 그 소중한 순간을 "
     "한 장의 그림으로 남겨 둡니다."
 )
+
+
+def _keyword_narrative(keyword: str) -> str:
+    """A keyword-flavored fallback so different recalls don't all share one line."""
+    return (
+        f"오늘 함께 떠올린 '{keyword}'의 기억 속에는 따뜻한 시간이 담겨 있었습니다. "
+        "그 소중한 순간을 한 장의 그림으로 남겨 둡니다."
+    )
 
 
 class AutobiographyService:
@@ -102,12 +121,19 @@ class AutobiographyService:
                     if kw in memory_text:
                         base = tmpl
                         break
+            # Keyword-flavored fallback so two different recalls never share the
+            # exact same generic line (which looked un-personalized across pages).
+            if base is None and keyword and len(keyword) >= 2:
+                base = _keyword_narrative(keyword)
             return base or _DEFAULT_NARRATIVE
 
         system = (
             "당신은 치매 환자의 자서전 그림책에 들어갈 narrative를 쓰는 작가입니다. "
             "환자가 회상한 기억을 따뜻하고 서정적인 한국어 2~3문장으로 응축하세요. "
-            "3인칭의 부드러운 회고 어조를 사용하고, 과장 없이 진솔하게 쓰세요."
+            "3인칭의 부드러운 회고 어조를 사용하고, 과장 없이 진솔하게 쓰세요. "
+            "⚠️환자가 말하지 않은 사실을 지어내지 마세요. 특히 그 장소가 환자의 '직업'이었다고 "
+            "단정하지 말고(예: 시장을 회상했다고 '채소 장사를 했다'고 쓰지 말 것), 환자가 실제로 "
+            "말한 기억과 정서만 담으세요."
         )
         name_hint = f"환자 이름: {patient_name}. " if patient_name else ""
         user = (

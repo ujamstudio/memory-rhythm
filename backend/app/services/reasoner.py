@@ -126,7 +126,9 @@ class Reasoner:
             if any(m in clause for m in _NEGATION_MARKERS):
                 any_negated_clause = True
                 continue
-            recall_kw += [k for k in recall_targets if k and k in clause]
+            # len>=2 so a 1-char keyword never partial-matches inside a larger
+            # word (e.g. '절' inside '시절' wrongly firing a recall on a goodbye).
+            recall_kw += [k for k in recall_targets if k and len(k) >= 2 and k in clause]
         recall_kw = list(dict.fromkeys(recall_kw))  # dedupe, preserve order
         # Treat the turn as a denial only when nothing was genuinely recalled.
         negated = any_negated_clause and not recall_kw
@@ -139,9 +141,12 @@ class Reasoner:
         reason = ""
 
         if stage == 1:
-            # Stage 1 정서 안정화: one warm priming turn, then move to retrieval.
-            # The very first turn stays in Stage 1; any subsequent turn advances.
-            if state.stage2_turns == 0 and len(state.user_texts) <= 1:
+            # Stage 1 정서 안정화 -> retrieval. Advance as soon as we are still in
+            # Stage 1 and haven't started retrieval yet — do NOT gate on the turn
+            # count. Gating on len(user_texts)<=1 stranded the session forever when
+            # the live model conservatively kept Stage 1 on turn 1 and later turns
+            # fell back to mock (by then len>1, so it could never advance).
+            if state.stage2_turns == 0:
                 next_stage = 2
                 hint_level = 0
                 reason = (
@@ -227,6 +232,10 @@ class Reasoner:
             "당신은 치매 인지 치료를 지휘하는 '두뇌'(Reasoning) 모듈입니다. "
             "대화 흐름을 3단계로 운영합니다: "
             "1=정서 안정화, 2=대화형 인출, 3=행동 수행. "
+            "⚠️Stage 1은 따뜻한 첫 인사 '한 번'이면 충분합니다. 환자가 한 번이라도 응답하면 "
+            "지체 없이 next_stage=2(대화형 인출)로 전환하세요. 환자가 피곤함·회피·'기억이 안 난다'를 "
+            "표현하더라도 Stage 1에 머무르지 말고, 단서 수위를 낮게(0~1) 시작하며 부드럽게 Stage 2로 "
+            "이끄세요. Stage 1에 두 턴 이상 머무르면 안 됩니다. "
             "Stage 2에서는 환자가 머뭇거리면 힌트 수위를 0->4로 점진적으로 올립니다 "
             "(0 질문만, 1 카테고리 단서, 2 주변 기억, 3 시각 단서, 4 직접 단서). "
             "구체적인 장소나 사건 키워드가 회상되면 recall_detected=true 로 판단하고 "
