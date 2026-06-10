@@ -12,3 +12,4 @@ httpx>=0.27
 numpy>=1.26
 google-genai>=0.3
 boto3>=1.34   # Amazon Polly TTS (TTS_PROVIDER=polly)
+Pillow>=10.0  # shrink Imagen output for the inline autobiography image

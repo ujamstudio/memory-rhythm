@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # Module model-name constants (Google-specific; base.py keeps the OpenAI ones).
 GEMINI_LLM_DEFAULT = "gemini-2.5-flash"      # the "두뇌"+"입": reasoning + dialogue
 GEMINI_EMBED_MODEL = "gemini-embedding-001"  # 768-dim embeddings by default
-IMAGEN_MODEL = "imagen-3.0-generate-002"     # Imagen image generation
+IMAGEN_MODEL = "imagen-4.0-fast-generate-001"  # Imagen 4 (fast); imagen-3.0 names are retired
 
 # Default embedding output dimensionality for gemini-embedding-001.
 GOOGLE_EMBED_DIM = 768
@@ -290,6 +290,26 @@ class GoogleSTT(STTProvider):
         return " ".join(p.strip() for p in parts if p).strip()
 
 
+def _to_compact_jpeg(png_bytes: bytes) -> tuple[str, bytes]:
+    """Resize to <=768px and re-encode as JPEG to shrink the inline e-book image.
+
+    Returns (mime, bytes). Falls back to the original PNG if Pillow is missing or
+    the image can't be decoded — the page still gets a picture either way.
+    """
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        im = Image.open(BytesIO(png_bytes)).convert("RGB")
+        im.thumbnail((768, 768))
+        buf = BytesIO()
+        im.save(buf, format="JPEG", quality=82, optimize=True)
+        return "image/jpeg", buf.getvalue()
+    except Exception:  # pragma: no cover - Pillow missing / decode error
+        return "image/png", png_bytes
+
+
 class GoogleImage(ImageProvider):
     """Imagen image generation via google-genai.
 
@@ -321,8 +341,11 @@ class GoogleImage(ImageProvider):
                 ),
             )
             image_bytes = resp.generated_images[0].image.image_bytes
-            b64 = base64.b64encode(image_bytes).decode("ascii")
-            return "data:image/png;base64," + b64
+            # Imagen returns a ~2MB PNG; shrink to a ~768px JPEG so the e-book
+            # page (carried inline over the WebSocket) stays light. Falls back to
+            # the raw PNG if Pillow is unavailable.
+            mime, data = _to_compact_jpeg(image_bytes)
+            return f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
         except Exception as exc:
             # Any failure (missing SDK, no billing, network, empty result) ->
             # deterministic offline SVG so the e-book page is never blank.

@@ -131,9 +131,10 @@ if ($Gemini) {
   $keyLine = (Select-String -Path $envFile -Pattern '^\s*GOOGLE_API_KEY\s*=' | Select-Object -First 1).Line
   if (-not $keyLine) { throw "GOOGLE_API_KEY not found in backend/.env." }
   $apiKey = ($keyLine -replace '^\s*GOOGLE_API_KEY\s*=\s*', '').Trim().Trim('"')
-  # Two systemd Environment lines: select Gemini for the LLM + inject the key.
-  $geminiLine = "Environment=LLM_PROVIDER=google`nEnvironment=GOOGLE_API_KEY=$apiKey"
-  Write-Host "  (Gemini LLM enabled; key injected via instance user-data)" -ForegroundColor Yellow
+  # Gemini for the LLM (두뇌+입) AND Imagen for the autobiography image, on the
+  # same paid key. (Embedding/STT stay mock — deterministic + no extra cost.)
+  $geminiLine = "Environment=LLM_PROVIDER=google`nEnvironment=IMAGE_PROVIDER=google`nEnvironment=GOOGLE_API_KEY=$apiKey"
+  Write-Host "  (Gemini LLM + Imagen image enabled; key injected via instance user-data)" -ForegroundColor Yellow
 }
 
 # -Eleven enables real ElevenLabs TTS (voice output). NOTE: a FREE ElevenLabs tier
@@ -294,7 +295,8 @@ if (-not $Https) { Write-Host "   IP:         http://$ip/" -ForegroundColor Whit
 if ($Https) { Write-Host "   (HTTP $ip redirects to HTTPS; cert issues ~30-90s after boot)" -ForegroundColor DarkGray }
 $ttsMode = if ($Polly) { "Polly(ko)" } elseif ($Eleven) { "ElevenLabs" } else { "mock" }
 $llmMode = if ($Gemini) { "Gemini" } else { "mock" }
-Write-Host "   AI mode:    LLM=$llmMode, TTS=$ttsMode, STT/image/embedding=mock" -ForegroundColor White
+$imgMode = if ($Gemini) { "Imagen4" } else { "mock" }
+Write-Host "   AI mode:    LLM=$llmMode, TTS=$ttsMode, image=$imgMode, STT/embedding=mock" -ForegroundColor White
 Write-Host "   Instance:   $instId  ($InstanceType, $Region)" -ForegroundColor White
 if ($KeyName) { Write-Host "   SSH:        ssh ubuntu@$dns  (logs: journalctl -u memrhythm -f)" -ForegroundColor DarkGray }
 Write-Host ""
