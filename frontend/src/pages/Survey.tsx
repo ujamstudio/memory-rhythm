@@ -20,12 +20,16 @@ import type {
   SurveyResult,
   SurveyServerMessage,
 } from "../protocol";
+import { motion, AnimatePresence } from "framer-motion";
+import { Link } from "wouter";
 import { SurveySocket } from "../lib/ws";
 import {
   SurveyContextPanel,
   type SurveyCapture,
 } from "../components/SurveyContextPanel";
 import { SurveyProfileCard } from "../components/SurveyProfileCard";
+import { ChatBubble, type ChatLine } from "../components/patient/ChatBubble";
+import { TypingDots } from "../components/patient/TypingDots";
 
 // Human-readable Korean labels for the survey domains. Mirrors the backend
 // domain->label map so the live panel can show friendly topic names.
@@ -104,6 +108,9 @@ export default function Survey() {
 
   // completion
   const [result, setResult] = useState<SurveyResult | null>(null);
+
+  // 단서(captures) slide-in drawer, like the patient screen's 추론/앨범.
+  const [panelOpen, setPanelOpen] = useState(false);
 
   const sockRef = useRef<SurveySocket | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -215,27 +222,39 @@ export default function Survey() {
 
   if (step === "complete" && result) {
     return (
-      <div className="paper-surface min-h-screen px-4 py-10">
-        <SurveyProfileCard result={result} />
+      <div style={{ minHeight: "100dvh", background: "#2a2018", overflow: "auto", padding: "16px" }}>
+        <div style={{ maxWidth: "440px", margin: "0 auto" }}>
+          <SurveyProfileCard result={result} />
+        </div>
       </div>
     );
   }
 
   if (step === "setup") {
     return (
-      <div className="paper-surface min-h-screen px-4 py-10">
-        <div className="mx-auto max-w-xl rounded-3xl border border-[#E7D7C0] bg-white p-8 shadow-md">
-          <h1 className="text-3xl font-extrabold text-stone-800">초기 설문</h1>
-          <p className="mt-2 text-lg leading-relaxed text-stone-500">
-            편안하게 이야기 나누며 어르신의 소중한 기억을 함께 모아 봅니다.
-            대답하기 어려운 질문은 "잘 모르겠어요"로 넘어가셔도 괜찮아요.
+      <div
+        style={{
+          minHeight: "100dvh",
+          background: "#2a2018",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "16px",
+        }}
+      >
+        <div
+          className="paper-surface"
+          style={{ width: "100%", maxWidth: "400px", borderRadius: "20px", padding: "22px 20px" }}
+        >
+          <h1 style={{ fontFamily: '"Gothic A1", sans-serif', fontSize: "20px", fontWeight: 900, color: "#4a3520", margin: 0 }}>
+            초기 설문
+          </h1>
+          <p style={{ fontFamily: '"Gothic A1", sans-serif', fontSize: "13px", lineHeight: 1.6, color: "#8a7a64", marginTop: "8px" }}>
+            편안하게 이야기 나누며 어르신의 소중한 기억을 함께 모아 봅니다. 어려운 질문은 "건너뛰기"로 넘어가셔도 괜찮아요.
           </p>
 
-          <div className="mt-7">
-            <label
-              htmlFor="survey_name"
-              className="mb-2 block text-base font-semibold text-stone-700"
-            >
+          <div style={{ marginTop: "18px" }}>
+            <label htmlFor="survey_name" style={{ display: "block", fontFamily: '"Gothic A1", sans-serif', fontSize: "13px", fontWeight: 700, color: "#6E5A44", marginBottom: "6px" }}>
               어르신 성함
             </label>
             <input
@@ -246,45 +265,34 @@ export default function Survey() {
                 if (e.key === "Enter") startSurvey();
               }}
               placeholder="예: 김영자"
-              className="w-full rounded-xl border border-[#E7D7C0] bg-white px-4 py-3 text-lg text-stone-800 focus:border-[#C67537] focus:outline-none focus:ring-2 focus:ring-[#EAD0A4]"
+              style={{ width: "100%", boxSizing: "border-box", borderRadius: "12px", border: "1.5px solid rgba(198,117,55,0.3)", padding: "10px 14px", fontFamily: '"Gothic A1", sans-serif', fontSize: "15px", background: "rgba(255,255,255,0.9)", color: "#33291F", outline: "none" }}
             />
           </div>
 
-          <div className="mt-6">
-            <span className="mb-2 block text-base font-semibold text-stone-700">
+          <div style={{ marginTop: "14px" }}>
+            <span style={{ display: "block", fontFamily: '"Gothic A1", sans-serif', fontSize: "13px", fontWeight: 700, color: "#6E5A44", marginBottom: "6px" }}>
               치매 유형
             </span>
-            <div className="space-y-2">
-              {DEMENTIA_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => setDementiaType(opt.value)}
-                  className={`flex w-full items-start gap-3 rounded-2xl border px-4 py-3 text-left transition ${
-                    dementiaType === opt.value
-                      ? "border-[#C67537] bg-[#F4EBDD] ring-2 ring-[#EAD0A4]"
-                      : "border-stone-200 bg-white hover:bg-stone-50"
-                  }`}
-                >
-                  <span
-                    className={`mt-1 grid h-5 w-5 shrink-0 place-items-center rounded-full border ${
-                      dementiaType === opt.value
-                        ? "border-[#C67537] bg-[#C67537] text-white"
-                        : "border-stone-300"
-                    }`}
+            <div style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
+              {DEMENTIA_OPTIONS.map((opt) => {
+                const sel = dementiaType === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setDementiaType(opt.value)}
+                    style={{ display: "flex", alignItems: "flex-start", gap: "9px", textAlign: "left", borderRadius: "14px", padding: "9px 12px", cursor: "pointer", border: sel ? "1.5px solid #C67537" : "1.5px solid rgba(120,100,80,0.18)", background: sel ? "#F4EBDD" : "rgba(255,255,255,0.7)" }}
                   >
-                    {dementiaType === opt.value ? "✓" : ""}
-                  </span>
-                  <span>
-                    <span className="block text-base font-bold text-stone-800">
-                      {opt.label}
+                    <span style={{ marginTop: "2px", display: "grid", placeItems: "center", width: "18px", height: "18px", flexShrink: 0, borderRadius: "50%", fontSize: "11px", color: "#fff", border: sel ? "1px solid #C67537" : "1px solid rgba(120,100,80,0.3)", background: sel ? "#C67537" : "transparent" }}>
+                      {sel ? "✓" : ""}
                     </span>
-                    <span className="block text-sm text-stone-500">
-                      {opt.hint}
+                    <span>
+                      <span style={{ display: "block", fontFamily: '"Gothic A1", sans-serif', fontSize: "14px", fontWeight: 800, color: "#4a3520" }}>{opt.label}</span>
+                      <span style={{ display: "block", fontFamily: '"Gothic A1", sans-serif', fontSize: "12px", color: "#9A8A74" }}>{opt.hint}</span>
                     </span>
-                  </span>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -292,7 +300,7 @@ export default function Survey() {
             type="button"
             onClick={startSurvey}
             disabled={!name.trim()}
-            className="mt-8 w-full rounded-full bg-[#C67537] px-6 py-4 text-lg font-bold text-white shadow-md transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
+            style={{ marginTop: "18px", width: "100%", borderRadius: "9999px", background: name.trim() ? "#C67537" : "#C2A98E", color: "#fff", padding: "12px", fontFamily: '"Gothic A1", sans-serif', fontSize: "16px", fontWeight: 800, border: "none", cursor: name.trim() ? "pointer" : "default" }}
           >
             설문 시작
           </button>
@@ -301,147 +309,163 @@ export default function Survey() {
     );
   }
 
-  // step === "converse"
+  // step === "converse" — same compact chat format as the patient screen
+  const chatLines: ChatLine[] = turns.map((t) =>
+    t.role === "persona"
+      ? { role: "assistant", text: [t.preface, t.text].filter(Boolean).join(" ") }
+      : { role: "user", text: t.text },
+  );
+  const pct = progress.total > 0 ? Math.round((progress.index / progress.total) * 100) : 0;
+
   return (
-    <div className="paper-surface min-h-screen p-4 md:p-6">
-      <div className="mx-auto max-w-6xl">
-        <div className="mb-4">
-          <h1 className="text-2xl font-bold text-stone-800">
-            초기 설문 — {name.trim()} 어르신
-          </h1>
-          <p className="text-sm text-stone-500">
-            천천히 대답해 주세요. 떠올린 기억은 오른쪽에 단서로 모입니다.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-          {/* LEFT (2 cols): conversation */}
-          <div className="lg:col-span-2">
-            <div className="flex h-[calc(100vh-10rem)] min-h-[480px] flex-col rounded-3xl border border-stone-200 bg-white p-5 shadow-sm">
-              {/* progress bar */}
-              <div className="mb-3">
-                <div className="mb-1 flex items-center justify-between text-xs font-semibold text-stone-500">
-                  <span>질문 진행</span>
-                  <span>
-                    {Math.min(progress.index + 1, progress.total)} /{" "}
-                    {progress.total}
-                  </span>
-                </div>
-                <div className="h-2 w-full overflow-hidden rounded-full bg-stone-100">
-                  <div
-                    className="h-full rounded-full bg-[#C67537] transition-all duration-500"
-                    style={{
-                      width: `${
-                        progress.total > 0
-                          ? Math.round((progress.index / progress.total) * 100)
-                          : 0
-                      }%`,
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* transcript */}
-              <div className="flex-1 space-y-3 overflow-y-auto pr-1">
-                {turns.length === 0 && !connError && (
-                  <p className="py-8 text-center text-base text-stone-400">
-                    설문을 준비하고 있어요…
-                  </p>
-                )}
-                {connError && (
-                  <div className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-600">
-                    ⚠️ {connError}
-                  </div>
-                )}
-                {turns.map((t, i) =>
-                  t.role === "persona" ? (
-                    <PersonaBubble key={i} preface={t.preface} text={t.text} />
-                  ) : (
-                    <div key={i} className="flex justify-end">
-                      <div className="max-w-[80%] rounded-2xl bg-[#C67537] px-4 py-3 text-lg leading-relaxed text-white">
-                        {t.text}
-                      </div>
-                    </div>
-                  ),
-                )}
-                {waiting && (
-                  <div className="flex justify-start">
-                    <div className="rounded-2xl bg-stone-100 px-4 py-3 text-stone-400">
-                      …
-                    </div>
-                  </div>
-                )}
-                <div ref={chatEndRef} />
-              </div>
-
-              {/* answer input */}
-              <form
-                className="mt-4 flex gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  submitAnswer();
-                }}
-              >
-                <input
-                  value={answer}
-                  onChange={(e) => setAnswer(e.target.value)}
-                  disabled={waiting || step !== "converse"}
-                  placeholder="여기에 대답을 입력하세요…"
-                  className="flex-1 rounded-xl border border-stone-300 px-4 py-3 text-lg focus:border-[#C67537] focus:outline-none disabled:bg-stone-50"
-                />
-                <button
-                  type="submit"
-                  disabled={waiting || !answer.trim()}
-                  className="rounded-xl bg-[#C67537] px-6 py-3 text-lg font-bold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  보내기
-                </button>
-              </form>
-
-              <button
-                type="button"
-                onClick={skip}
-                disabled={waiting}
-                className="mt-2 self-start rounded-full bg-stone-100 px-4 py-2 text-sm font-semibold text-stone-600 transition hover:bg-stone-200 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                잘 모르겠어요 / 건너뛰기
-              </button>
+    <div style={{ height: "100dvh", background: "#2a2018", display: "flex", alignItems: "stretch", justifyContent: "center", padding: "clamp(6px, 2vw, 12px)", overflow: "hidden" }}>
+      <div
+        className="paper-surface"
+        style={{ width: "100%", maxWidth: "440px", height: "100%", minHeight: 0, borderRadius: "clamp(12px, 3vw, 20px)", display: "flex", flexDirection: "column", overflow: "hidden" }}
+      >
+        {/* header */}
+        <div style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", padding: "8px 11px 7px", fontFamily: '"Gothic A1", sans-serif', borderBottom: "1px solid rgba(198,117,55,0.14)" }}>
+          <Link href="/">
+            <span style={{ fontSize: "13px", color: "#6E6051", fontWeight: 700, cursor: "pointer" }}>←</span>
+          </Link>
+          <div style={{ textAlign: "center", lineHeight: 1.1, minWidth: 0 }}>
+            <div style={{ fontSize: "13px", color: "#C67537", fontWeight: 900, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              초기 설문 · {name.trim()}
+            </div>
+            <div style={{ fontSize: "10px", color: "#9A8A74", fontWeight: 700 }}>
+              질문 {Math.min(progress.index + 1, progress.total)} / {progress.total}
             </div>
           </div>
-
-          {/* RIGHT: live context panel */}
-          <div className="lg:col-span-1">
-            <div className="h-[calc(100vh-10rem)] min-h-[480px]">
-              <SurveyContextPanel
-                captures={captures}
-                index={progress.index}
-                total={progress.total}
-              />
-            </div>
-          </div>
+          <button
+            type="button"
+            onClick={() => setPanelOpen(true)}
+            aria-label="모은 단서 보기"
+            style={{ flexShrink: 0, borderRadius: "9999px", padding: "4px 9px", fontFamily: '"Gothic A1", sans-serif', fontSize: "12px", fontWeight: 800, color: "#6E4A2A", background: "rgba(255,255,255,0.7)", border: "1.5px solid rgba(198,117,55,0.28)", cursor: "pointer", whiteSpace: "nowrap" }}
+          >
+            단서 {captures.length}
+          </button>
         </div>
+
+        {/* progress bar */}
+        <div style={{ flexShrink: 0, height: "3px", background: "rgba(198,117,55,0.12)" }}>
+          <div style={{ height: "100%", width: `${pct}%`, background: "#C67537", transition: "width 0.5s ease" }} />
+        </div>
+
+        {/* chat */}
+        <div role="log" aria-live="polite" aria-label="설문 대화" style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "7px", padding: "10px 6px 8px", minHeight: 0 }}>
+          {turns.length === 0 && !connError && (
+            <p style={{ textAlign: "center", color: "#9A8A74", fontFamily: '"Gothic A1", sans-serif', fontWeight: 700, fontSize: "13px", padding: "20px 0" }}>
+              설문을 준비하고 있어요…
+            </p>
+          )}
+          {connError && (
+            <div style={{ textAlign: "center", color: "#b4524a", fontSize: "12px", fontFamily: '"Gothic A1", sans-serif', padding: "6px 10px" }}>⚠️ {connError}</div>
+          )}
+          {chatLines.map((m, i) => (
+            <ChatBubble key={i} line={m} />
+          ))}
+          {waiting && <TypingDots />}
+          <div ref={chatEndRef} />
+        </div>
+
+        {/* messenger-style bottom bar: skip · input · send */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            submitAnswer();
+          }}
+          style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: "6px", padding: "7px 9px 9px", borderTop: "1px solid rgba(198,117,55,0.14)", background: "rgba(244,235,221,0.7)", backdropFilter: "blur(8px)" }}
+        >
+          <button
+            type="button"
+            onClick={skip}
+            disabled={waiting}
+            title="잘 모르겠어요 / 건너뛰기"
+            aria-label="건너뛰기"
+            style={{ flexShrink: 0, width: "34px", height: "34px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: '"Gothic A1", sans-serif', fontSize: "16px", fontWeight: 800, color: "#8a6a3f", background: "#EFE2CC", border: "none", cursor: waiting ? "default" : "pointer", opacity: waiting ? 0.5 : 1 }}
+          >
+            ⤳
+          </button>
+          <label htmlFor="survey_answer" className="sr-only">대답 입력</label>
+          <input
+            id="survey_answer"
+            value={answer}
+            onChange={(e) => setAnswer(e.target.value)}
+            disabled={waiting}
+            placeholder={waiting ? "…" : "대답 입력…"}
+            style={{ flex: 1, minWidth: 0, borderRadius: "9999px", border: "1.5px solid rgba(198,117,55,0.3)", padding: "9px 14px", fontFamily: '"Gothic A1", sans-serif', fontSize: "15px", background: "rgba(255,255,255,0.9)", color: "#33291F", outline: "none" }}
+          />
+          <button
+            type="submit"
+            disabled={waiting || !answer.trim()}
+            aria-label="대답 보내기"
+            style={{ flexShrink: 0, width: "40px", height: "40px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", border: "none", background: waiting || !answer.trim() ? "#C2A98E" : "linear-gradient(#D98040, #C67537)", boxShadow: "0 2px 6px rgba(130,70,30,0.3)", color: "#fff", cursor: waiting || !answer.trim() ? "default" : "pointer" }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7z" />
+            </svg>
+          </button>
+        </form>
       </div>
+
+      {/* 단서(captures) slide-in drawer */}
+      <SurveyContextDrawer
+        open={panelOpen}
+        onClose={() => setPanelOpen(false)}
+        captures={captures}
+        index={progress.index}
+        total={progress.total}
+      />
     </div>
   );
 }
 
-function PersonaBubble({
-  preface,
-  text,
+function SurveyContextDrawer({
+  open,
+  onClose,
+  captures,
+  index,
+  total,
 }: {
-  preface: string;
-  text: string;
+  open: boolean;
+  onClose: () => void;
+  captures: SurveyCapture[];
+  index: number;
+  total: number;
 }) {
   return (
-    <div className="flex justify-start">
-      <div className="max-w-[85%] rounded-2xl bg-stone-100 px-4 py-3 text-stone-800">
-        {preface && (
-          <p className="mb-1.5 text-base italic leading-relaxed text-stone-500">
-            {preface}
-          </p>
-        )}
-        <p className="text-lg leading-relaxed">{text}</p>
-      </div>
-    </div>
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            key="bd"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            onClick={onClose}
+            style={{ position: "fixed", inset: 0, background: "rgba(40,30,20,0.4)", backdropFilter: "blur(2px)", zIndex: 40 }}
+          />
+          <motion.aside
+            key="dw"
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "spring", stiffness: 320, damping: 34 }}
+            style={{ position: "fixed", top: 0, right: 0, height: "100dvh", width: "clamp(300px, 92vw, 420px)", background: "#F4EBDD", boxShadow: "-12px 0 40px rgba(40,25,10,0.3)", zIndex: 41, display: "flex", flexDirection: "column", padding: "clamp(12px, 3vw, 18px)", gap: "10px" }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+              <div style={{ fontFamily: '"Gothic A1", sans-serif', fontSize: "16px", fontWeight: 900, color: "#4a3520" }}>모은 기억 단서</div>
+              <button type="button" onClick={onClose} aria-label="닫기" style={{ width: "36px", height: "36px", borderRadius: "50%", border: "none", cursor: "pointer", fontSize: "18px", fontWeight: 900, color: "#6E4A2A", background: "rgba(255,255,255,0.8)" }}>
+                ✕
+              </button>
+            </div>
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+              <SurveyContextPanel captures={captures} index={index} total={total} />
+            </div>
+          </motion.aside>
+        </>
+      )}
+    </AnimatePresence>
   );
 }
