@@ -376,22 +376,56 @@ export default function Patient() {
     try {
       const rec = new SR();
       rec.lang = "ko-KR";
-      rec.interimResults = false;
+      rec.continuous = false;
+      // Safari/webkit only delivers transcripts when interimResults is ON; with
+      // it off, onresult often never fires and the mic looks stuck on "듣는 중".
+      rec.interimResults = true;
       rec.maxAlternatives = 1;
+
+      let finalText = "";
+      let lastInterim = "";
+      let errored = "";
+
       rec.onresult = (e: any) => {
-        const transcript = e?.results?.[0]?.[0]?.transcript ?? "";
-        if (transcript.trim()) sendText(transcript);
+        // Loop ALL results (Safari indexes differently than Chrome) and split
+        // final vs interim by isFinal rather than assuming results[0].
+        let interim = "";
+        for (let i = e.resultIndex ?? 0; i < e.results.length; i++) {
+          const r = e.results[i];
+          const t = r?.[0]?.transcript ?? "";
+          if (r?.isFinal) finalText += t;
+          else interim += t;
+        }
+        lastInterim = interim;
+        // Live feedback in the input box so the patient SEES it's hearing them.
+        setInput((finalText + interim).trim());
       };
       rec.onerror = (e: any) => {
-        // not-allowed / service-not-allowed (mic blocked or insecure origin).
-        if (e?.error === "not-allowed" || e?.error === "service-not-allowed") {
-          fallbackToTyping("🎤 마이크 사용이 막혀 있어요. 권한을 허용하거나, 아래에 글로 적어 주세요.");
+        errored = e?.error || "error";
+      };
+      // Send on END (Safari fires onend reliably; onresult-final is flaky). Use
+      // the accumulated final, or the last interim as a fallback.
+      rec.onend = () => {
+        setListening(false);
+        const text = (finalText || lastInterim).trim();
+        finalText = "";
+        lastInterim = "";
+        if (text) {
+          sendText(text);
+          return;
+        }
+        if (errored === "not-allowed" || errored === "service-not-allowed") {
+          fallbackToTyping("🎤 마이크 권한이 막혀 있어요. 브라우저의 마이크 권한을 허용하거나, 아래에 글로 적어 주세요.");
         } else {
-          setListening(false);
+          setInput("");
+          setMessages((m) => [
+            ...m,
+            { role: "system", text: "🎤 잘 못 들었어요. 한 번 더 또박또박 말씀해 주세요." },
+          ]);
         }
       };
-      rec.onend = () => setListening(false);
       recognitionRef.current = rec;
+      setInput("");
       setListening(true);
       rec.start();
     } catch {
@@ -801,8 +835,14 @@ export default function Patient() {
             ref={inputRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            disabled={controlsLocked}
-            placeholder={controlsLocked ? "시뮬레이션 진행 중…" : "여기에 말을 입력하세요…"}
+            disabled={controlsLocked || listening}
+            placeholder={
+              controlsLocked
+                ? "시뮬레이션 진행 중…"
+                : listening
+                  ? "🎤 듣는 중…"
+                  : "여기에 말을 입력하세요…"
+            }
             style={{
               flex: 1,
               borderRadius: "14px",
@@ -819,7 +859,7 @@ export default function Patient() {
               (Enter/mic are not obvious to 어르신). Disabled when empty/awaiting. */}
           <button
             type="submit"
-            disabled={awaiting || controlsLocked || !input.trim()}
+            disabled={awaiting || controlsLocked || listening || !input.trim()}
             className="phys-btn"
             aria-label="대답 보내기"
             style={{
